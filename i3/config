@@ -6,12 +6,12 @@
 #
 
 # customize workspace names
-set $WS1 ""
-set $WS2 ""
-set $WS3 ""
-set $WS4 ""
-set $WS5 ""
-set $WS6 ""
+set $WS1 "1: "
+set $WS2 "2: "
+set $WS3 "3: "
+set $WS4 "4: "
+set $WS5 "5: "
+set $WS6 "6: "
 set $WS7 ""
 set $WS8 ""
 set $WS9 ""
@@ -208,7 +208,7 @@ client.background		$white
 exec --no-startup-id nitrogen --restore
 
 # lock the screen
-bindsym $mod+y exec i3lock -c 000000 -i /home/nevious/Nextcloud/Stuff/Wallpapers/arsch.png
+bindsym $mod+y exec i3lock -c 000000
 
 # move about in workspaces
 bindsym $mod+c workspace next
@@ -227,13 +227,14 @@ bindsym $mod+p exec rofi -show window -theme flat-orange
 # put some type of windows in floeating mode
 for_window [window_role="pop-up"] floating enable border none sticky
 for_window [title="pop-up"] floating enable border none sticky
+for_window [title="Boostnote"] floating enable border none sticky
 
 # docking/undocking
 bindsym $mod+shift+d exec /home/nevious/.config/i3/dock.sh
 bindsym $mod+shift+u exec /home/nevious/.config/i3/undock.sh
 
 # autostart
-exec --no-startup-id /usr/bin/compton -b --backend glx --vsync opengl-swc -d :0 --config ~/.config/compton.conf
+exec --no-startup-id /usr/bin/compton -b --backend glx --vsync --config ~/.config/compton.conf
 exec --no-startup-id /usr/bin/nextcloud
 exec --no-startup-id nm-applet
 exec --no-startup-id libinput-gestures-setup start
