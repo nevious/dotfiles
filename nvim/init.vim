@@ -51,6 +51,12 @@ Plugin 'scrooloose/nerdtree'
 " get rid of pyc files in nerdtree
 let NERDTreeIgnore = ['\.pyc$']
 
+" Plugin vimwiki
+Plugin 'vimwiki/vimwiki'
+let g:vimwiki_list = [{'path':'~/wiki/vimwiki', 'path_html':'~/wiki/vimwiki_html/', 'syntax': 'markdown', 'ext': '.md'}]
+
+Plugin 'nevious/makepdf'
+
 call vundle#end()
 filetype plugin indent on
 
@@ -125,3 +131,4 @@ set noexpandtab
 
 " workaround: https://github.com/neovim/neovim/issues/3786
 autocmd FileType python setlocal tabstop=4 noexpandtab
+
