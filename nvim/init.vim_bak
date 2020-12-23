@@ -1,0 +1,56 @@
+set laststatus=2
+
+"bash style completion
+set wildmode=longest,list
+set wildmenu
+
+set completeopt=menuone,menu,longest,preview
+
+" turn on the filetype plugins
+filetype on
+filetype plugin on
+filetype indent on
+
+if has("gui_running")
+	set mouse=a
+	"colorscheme colorsbox-stbright
+	colorscheme srcery
+	set background=dark
+	set guioptions-=T
+	set guioptions-=m
+	set guifont=DejaVu\ Sans\ Mono\ 9
+	set number
+else
+	set number
+	set background=dark
+	set mouse=a
+	"colorscheme colorsbox-stbright
+	colorscheme srcery
+	set termguicolors
+	set tenc=utf8
+end
+
+" encoding
+set enc=utf-8
+
+" Set syntax on
+syntax on
+
+" show the command being typed
+set showcmd
+
+set t_Co=256 " Explicitly tell Vim that the terminal supports 256 colors
+
+
+if has("nvim")
+ tnoremap <Esc><Esc><Esc> <C-\><C-n>
+endif
+
+
+let base16colorspace=256
+set t_Co=256
+set t_AB=^[[48;5;%dm
+set t_AF=^[[38;5;%dm
+
+" incremental search and replace
+set inccommand=split
