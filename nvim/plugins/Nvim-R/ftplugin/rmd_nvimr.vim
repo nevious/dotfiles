@@ -21,6 +21,8 @@ let g:R_rmdchunk = get(g:, "R_rmdchunk", 1)
 if g:R_rmdchunk == 1
     " Write code chunk in rnoweb files
     inoremap <buffer><silent> ` <Esc>:call RWriteRmdChunk()<CR>a
+elseif type(g:R_rmdchunk) == v:t_string
+    exe 'inoremap <buffer><silent> ' . g:R_rmdchunk . ' <Esc>:call RWriteRmdChunk()<CR>a'
 endif
 
 function! RWriteRmdChunk()
@@ -52,7 +54,7 @@ function! s:GetYamlField(field)
             elseif bstr =~ '^\[.*\]$'
                 try
                     let l:bbl = eval(bstr)
-                catch *
+                catch /.*/
                     call RWarningMsg('YAML line invalid for Vim: ' . line)
                     let bibl = []
                 endtry
@@ -93,7 +95,7 @@ function! s:GetBibFileName()
         else
             let aa = [g:rplugin.py3, g:rplugin.home . '/R/bibtex.py', expand("%:p"), b:rplugin_bibf]
             let g:rplugin.jobs["BibComplete"] = StartJob(aa, g:rplugin.job_handlers)
-            call RCreateMaps("n",  '<Plug>ROpenRefFile',   'od', ':call GetBibAttachment()')
+            call RCreateMaps('n', 'ROpenRefFile', 'od', ':call GetBibAttachment()')
         endif
     endif
 endfunction
@@ -264,16 +266,16 @@ call RCreateStartMaps()
 call RCreateEditMaps()
 call RCreateSendMaps()
 call RControlMaps()
-call RCreateMaps("nvi", '<Plug>RSetwd',        'rd', ':call RSetWD()')
+call RCreateMaps('nvi', 'RSetwd', 'rd', ':call RSetWD()')
 
 " Only .Rmd files use these functions:
-call RCreateMaps("nvi", '<Plug>RKnit',          'kn', ':call RKnit()')
-call RCreateMaps("ni",  '<Plug>RSendChunk',     'cc', ':call b:SendChunkToR("silent", "stay")')
-call RCreateMaps("ni",  '<Plug>RESendChunk',    'ce', ':call b:SendChunkToR("echo", "stay")')
-call RCreateMaps("ni",  '<Plug>RDSendChunk',    'cd', ':call b:SendChunkToR("silent", "down")')
-call RCreateMaps("ni",  '<Plug>REDSendChunk',   'ca', ':call b:SendChunkToR("echo", "down")')
-call RCreateMaps("n",  '<Plug>RNextRChunk',     'gn', ':call b:NextRChunk()')
-call RCreateMaps("n",  '<Plug>RPreviousRChunk', 'gN', ':call b:PreviousRChunk()')
+call RCreateMaps('nvi', 'RKnit',           'kn', ':call RKnit()')
+call RCreateMaps('ni',  'RSendChunk',      'cc', ':call b:SendChunkToR("silent", "stay")')
+call RCreateMaps('ni',  'RESendChunk',     'ce', ':call b:SendChunkToR("echo", "stay")')
+call RCreateMaps('ni',  'RDSendChunk',     'cd', ':call b:SendChunkToR("silent", "down")')
+call RCreateMaps('ni',  'REDSendChunk',    'ca', ':call b:SendChunkToR("echo", "down")')
+call RCreateMaps('n',   'RNextRChunk',     'gn', ':call b:NextRChunk()')
+call RCreateMaps('n',   'RPreviousRChunk', 'gN', ':call b:PreviousRChunk()')
 
 " Menu R
 if has("gui_running")

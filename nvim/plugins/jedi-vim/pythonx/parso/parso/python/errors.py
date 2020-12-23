@@ -6,7 +6,6 @@ from contextlib import contextmanager
 
 from parso.normalizer import Normalizer, NormalizerConfig, Issue, Rule
 from parso.python.tree import search_ancestor
-from parso.parser import ParserSyntaxError
 
 _BLOCK_STMTS = ('if_stmt', 'while_stmt', 'for_stmt', 'try_stmt', 'with_stmt')
 _STAR_EXPR_PARENTS = ('testlist_star_expr', 'testlist_comp', 'exprlist')
@@ -17,6 +16,7 @@ ALLOWED_FUTURES = (
     'all_feature_names', 'nested_scopes', 'generators', 'division',
     'absolute_import', 'with_statement', 'print_function', 'unicode_literals',
 )
+_COMP_FOR_TYPES = ('comp_for', 'sync_comp_for')
 
 
 def _iter_stmts(scope):
@@ -35,12 +35,12 @@ def _iter_stmts(scope):
 
 def _get_comprehension_type(atom):
     first, second = atom.children[:2]
-    if second.type == 'testlist_comp' and second.children[1].type == 'comp_for':
+    if second.type == 'testlist_comp' and second.children[1].type in _COMP_FOR_TYPES:
         if first == '[':
             return 'list comprehension'
         else:
             return 'generator expression'
-    elif second.type == 'dictorsetmaker' and second.children[-1].type == 'comp_for':
+    elif second.type == 'dictorsetmaker' and second.children[-1].type in _COMP_FOR_TYPES:
         if second.children[1] == ':':
             return 'dict comprehension'
         else:
@@ -52,7 +52,7 @@ def _is_future_import(import_from):
     # It looks like a __future__ import that is relative is still a future
     # import. That feels kind of odd, but whatever.
     # if import_from.level != 0:
-        # return False
+    #     return False
     from_names = import_from.get_from_names()
     return [n.value for n in from_names] == ['__future__']
 
@@ -94,18 +94,32 @@ def _is_future_import_first(import_from):
 
 
 def _iter_definition_exprs_from_lists(exprlist):
-    for child in exprlist.children[::2]:
-        if child.type == 'atom' and child.children[0] in ('(', '['):
-            testlist_comp = child.children[0]
-            if testlist_comp.type == 'testlist_comp':
-                for expr in _iter_definition_exprs_from_lists(testlist_comp):
-                    yield expr
-                continue
+    def check_expr(child):
+        if child.type == 'atom':
+            if child.children[0] == '(':
+                testlist_comp = child.children[1]
+                if testlist_comp.type == 'testlist_comp':
+                    for expr in _iter_definition_exprs_from_lists(testlist_comp):
+                        yield expr
+                    return
+                else:
+                    # It's a paren that doesn't do anything, like 1 + (1)
+                    for c in check_expr(testlist_comp):
+                        yield c
+                    return
             elif child.children[0] == '[':
                 yield testlist_comp
-                continue
-
+                return
         yield child
+
+    if exprlist.type in _STAR_EXPR_PARENTS:
+        for child in exprlist.children[::2]:
+            for c in check_expr(child):  # Python 2 sucks
+                yield c
+    else:
+        for c in check_expr(exprlist):  # Python 2 sucks
+            yield c
+
 
 def _get_expr_stmt_definition_exprs(expr_stmt):
     exprs = []
@@ -119,8 +133,6 @@ def _get_expr_stmt_definition_exprs(expr_stmt):
 
 def _get_for_stmt_definition_exprs(for_stmt):
     exprlist = for_stmt.children[1]
-    if exprlist.type != 'exprlist':
-        return [exprlist]
     return list(_iter_definition_exprs_from_lists(exprlist))
 
 
@@ -164,8 +176,7 @@ class _Context(object):
         self._analyze_names(self._global_names, 'global')
         self._analyze_names(self._nonlocal_names, 'nonlocal')
 
-        # Python2.6 doesn't have dict comprehensions.
-        global_name_strs = dict((n.value, n) for n in self._global_names)
+        global_name_strs = {n.value: n for n in self._global_names}
         for nonlocal_name in self._nonlocal_names:
             try:
                 global_name = global_name_strs[nonlocal_name.value]
@@ -273,12 +284,11 @@ class ErrorFinder(Normalizer):
     def visit(self, node):
         if node.type == 'error_node':
             with self.visit_node(node):
-               # Don't need to investigate the inners of an error node. We
-               # might find errors in there that should be ignored, because
-               # the error node itself already shows that there's an issue.
-               return ''
+                # Don't need to investigate the inners of an error node. We
+                # might find errors in there that should be ignored, because
+                # the error node itself already shows that there's an issue.
+                return ''
         return super(ErrorFinder, self).visit(node)
-
 
     @contextmanager
     def visit_node(self, node):
@@ -455,23 +465,19 @@ class _YieldFromCheck(SyntaxRule):
 
     def is_issue(self, leaf):
         return leaf.parent.type == 'yield_arg' \
-                and self._normalizer.context.is_async_funcdef()
+            and self._normalizer.context.is_async_funcdef()
 
 
 @ErrorFinder.register_rule(type='name')
 class _NameChecks(SyntaxRule):
     message = 'cannot assign to __debug__'
-    message_keyword = 'assignment to keyword'
     message_none = 'cannot assign to None'
 
     def is_issue(self, leaf):
         self._normalizer.context.add_name(leaf)
 
         if leaf.value == '__debug__' and leaf.is_definition():
-            if self._normalizer.version < (3, 0):
-                return True
-            else:
-                self.add_issue(leaf, message=self.message_keyword)
+            return True
         if leaf.value == 'None' and self._normalizer.version < (3, 0) \
                 and leaf.is_definition():
             self.add_issue(leaf, message=self.message_none)
@@ -482,38 +488,38 @@ class _StringChecks(SyntaxRule):
     message = "bytes can only contain ASCII literal characters."
 
     def is_issue(self, leaf):
-            string_prefix = leaf.string_prefix.lower()
-            if 'b' in string_prefix \
-                    and self._normalizer.version >= (3, 0) \
-                    and any(c for c in leaf.value if ord(c) > 127):
-                # b'ä'
-                return True
+        string_prefix = leaf.string_prefix.lower()
+        if 'b' in string_prefix \
+                and self._normalizer.version >= (3, 0) \
+                and any(c for c in leaf.value if ord(c) > 127):
+            # b'ä'
+            return True
 
-            if 'r' not in string_prefix:
-                # Raw strings don't need to be checked if they have proper
-                # escaping.
-                is_bytes = self._normalizer.version < (3, 0)
-                if 'b' in string_prefix:
-                    is_bytes = True
-                if 'u' in string_prefix:
-                    is_bytes = False
+        if 'r' not in string_prefix:
+            # Raw strings don't need to be checked if they have proper
+            # escaping.
+            is_bytes = self._normalizer.version < (3, 0)
+            if 'b' in string_prefix:
+                is_bytes = True
+            if 'u' in string_prefix:
+                is_bytes = False
 
-                payload = leaf._get_payload()
-                if is_bytes:
-                    payload = payload.encode('utf-8')
-                    func = codecs.escape_decode
-                else:
-                    func = codecs.unicode_escape_decode
+            payload = leaf._get_payload()
+            if is_bytes:
+                payload = payload.encode('utf-8')
+                func = codecs.escape_decode
+            else:
+                func = codecs.unicode_escape_decode
 
-                try:
-                    with warnings.catch_warnings():
-                        # The warnings from parsing strings are not relevant.
-                        warnings.filterwarnings('ignore')
-                        func(payload)
-                except UnicodeDecodeError as e:
-                    self.add_issue(leaf, message='(unicode error) ' + str(e))
-                except ValueError as e:
-                    self.add_issue(leaf, message='(value error) ' + str(e))
+            try:
+                with warnings.catch_warnings():
+                    # The warnings from parsing strings are not relevant.
+                    warnings.filterwarnings('ignore')
+                    func(payload)
+            except UnicodeDecodeError as e:
+                self.add_issue(leaf, message='(unicode error) ' + str(e))
+            except ValueError as e:
+                self.add_issue(leaf, message='(value error) ' + str(e))
 
 
 @ErrorFinder.register_rule(value='*')
@@ -539,7 +545,7 @@ class _StarStarCheck(SyntaxRule):
     def is_issue(self, leaf):
         if leaf.parent.type == 'dictorsetmaker':
             comp_for = leaf.get_next_sibling().get_next_sibling()
-            return comp_for is not None and comp_for.type == 'comp_for'
+            return comp_for is not None and comp_for.type in _COMP_FOR_TYPES
 
 
 @ErrorFinder.register_rule(value='yield')
@@ -590,7 +596,7 @@ class _TrailingImportComma(SyntaxRule):
     message = "trailing comma not allowed without surrounding parentheses"
 
     def is_issue(self, node):
-        if node.children[-1] == ',':
+        if node.children[-1] == ',' and node.parent.children[-1] != ')':
             return True
 
 
@@ -618,7 +624,7 @@ class _FutureImportRule(SyntaxRule):
                     allowed_futures.append('generator_stop')
 
                 if name == 'braces':
-                    self.add_issue(node, message = "not a chance")
+                    self.add_issue(node, message="not a chance")
                 elif name == 'barry_as_FLUFL':
                     m = "Seriously I'm not implementing this :) ~ Dave"
                     self.add_issue(node, message=m)
@@ -638,7 +644,7 @@ class _StarExprRule(SyntaxRule):
             return True
         if node.parent.type == 'testlist_comp':
             # [*[] for a in [1]]
-            if node.parent.children[1].type == 'comp_for':
+            if node.parent.children[1].type in _COMP_FOR_TYPES:
                 self.add_issue(node, message=self.message_iterable_unpacking)
         if self._normalizer.version <= (3, 4):
             n = search_ancestor(node, 'for_stmt', 'expr_stmt')
@@ -715,8 +721,8 @@ class _AnnotatorRule(SyntaxRule):
             if not (lhs.type == 'name'
                     # subscript/attributes are allowed
                     or lhs.type in ('atom_expr', 'power')
-                        and trailer.type == 'trailer'
-                        and trailer.children[0] != '('):
+                    and trailer.type == 'trailer'
+                    and trailer.children[0] != '('):
                 return True
         else:
             # x, y: str
@@ -731,10 +737,16 @@ class _ArgumentRule(SyntaxRule):
         if node.children[1] == '=' and first.type != 'name':
             if first.type == 'lambdef':
                 # f(lambda: 1=1)
-                message = "lambda cannot contain assignment"
+                if self._normalizer.version < (3, 8):
+                    message = "lambda cannot contain assignment"
+                else:
+                    message = 'expression cannot contain assignment, perhaps you meant "=="?'
             else:
                 # f(+x=1)
-                message = "keyword can't be an expression"
+                if self._normalizer.version < (3, 8):
+                    message = "keyword can't be an expression"
+                else:
+                    message = 'expression cannot contain assignment, perhaps you meant "=="?'
             self.add_issue(first, message=message)
 
 
@@ -758,7 +770,7 @@ class _ArglistRule(SyntaxRule):
     def is_issue(self, node):
         first_arg = node.children[0]
         if first_arg.type == 'argument' \
-                and first_arg.children[1].type == 'comp_for':
+                and first_arg.children[1].type in _COMP_FOR_TYPES:
             # e.g. foo(x for x in [], b)
             return len(node.children) >= 2
         else:
@@ -787,7 +799,8 @@ class _ArglistRule(SyntaxRule):
                         if first == '*':
                             if kw_unpacking_only:
                                 # foo(**kwargs, *args)
-                                message = "iterable argument unpacking follows keyword argument unpacking"
+                                message = "iterable argument unpacking " \
+                                          "follows keyword argument unpacking"
                                 self.add_issue(argument, message=message)
                         else:
                             kw_unpacking_only = True
@@ -808,6 +821,7 @@ class _ArglistRule(SyntaxRule):
                         # f(x=2, y)
                         message = "positional argument follows keyword argument"
                         self.add_issue(argument, message=message)
+
 
 @ErrorFinder.register_rule(type='parameters')
 @ErrorFinder.register_rule(type='lambdef')
@@ -849,6 +863,7 @@ class _TryStmtRule(SyntaxRule):
 @ErrorFinder.register_rule(type='fstring')
 class _FStringRule(SyntaxRule):
     _fstring_grammar = None
+    message_expr = "f-string expression part cannot include a backslash"
     message_nested = "f-string: expressions nested too deeply"
     message_conversion = "f-string: invalid conversion character: expected 's', 'r', or 'a'"
 
@@ -858,6 +873,10 @@ class _FStringRule(SyntaxRule):
     def _check_fstring_expr(self, fstring_expr, depth):
         if depth >= 2:
             self.add_issue(fstring_expr, message=self.message_nested)
+
+        expr = fstring_expr.children[1]
+        if '\\' in expr.get_code():
+            self.add_issue(expr, message=self.message_expr)
 
         conversion = fstring_expr.children[2]
         if conversion.type == 'fstring_conversion':
@@ -879,7 +898,7 @@ class _FStringRule(SyntaxRule):
 
 
 class _CheckAssignmentRule(SyntaxRule):
-    def _check_assignment(self, node, is_deletion=False):
+    def _check_assignment(self, node, is_deletion=False, is_namedexpr=False):
         error = None
         type_ = node.type
         if type_ == 'lambdef':
@@ -889,19 +908,36 @@ class _CheckAssignmentRule(SyntaxRule):
             error = _get_comprehension_type(node)
             if error is None:
                 if second.type == 'dictorsetmaker':
-                    error = 'literal'
+                    if self._normalizer.version < (3, 8):
+                        error = 'literal'
+                    else:
+                        if second.children[1] == ':':
+                            error = 'dict display'
+                        else:
+                            error = 'set display'
                 elif first in ('(', '['):
                     if second.type == 'yield_expr':
                         error = 'yield expression'
                     elif second.type == 'testlist_comp':
+                        # ([a, b] := [1, 2])
+                        # ((a, b) := [1, 2])
+                        if is_namedexpr:
+                            if first == '(':
+                                error = 'tuple'
+                            elif first == '[':
+                                error = 'list'
+
                         # This is not a comprehension, they were handled
                         # further above.
                         for child in second.children[::2]:
-                            self._check_assignment(child, is_deletion)
+                            self._check_assignment(child, is_deletion, is_namedexpr)
                     else:  # Everything handled, must be useless brackets.
-                        self._check_assignment(second, is_deletion)
+                        self._check_assignment(second, is_deletion, is_namedexpr)
         elif type_ == 'keyword':
-            error = 'keyword'
+            if self._normalizer.version < (3, 8):
+                error = 'keyword'
+            else:
+                error = str(node.value)
         elif type_ == 'operator':
             if node.value == '...':
                 error = 'Ellipsis'
@@ -926,30 +962,39 @@ class _CheckAssignmentRule(SyntaxRule):
                 assert trailer.type == 'trailer'
                 if trailer.children[0] == '(':
                     error = 'function call'
+                elif is_namedexpr and trailer.children[0] == '[':
+                    error = 'subscript'
+                elif is_namedexpr and trailer.children[0] == '.':
+                    error = 'attribute'
         elif type_ in ('testlist_star_expr', 'exprlist', 'testlist'):
             for child in node.children[::2]:
-                self._check_assignment(child, is_deletion)
-        elif ('expr' in type_ and type_ != 'star_expr' # is a substring
+                self._check_assignment(child, is_deletion, is_namedexpr)
+        elif ('expr' in type_ and type_ != 'star_expr'  # is a substring
               or '_test' in type_
               or type_ in ('term', 'factor')):
             error = 'operator'
 
         if error is not None:
-            message = "can't %s %s" % ("delete" if is_deletion else "assign to", error)
+            if is_namedexpr:
+                # c.f. CPython bpo-39176, should be changed in next release
+                # message = 'cannot use assignment expressions with %s' % error
+                message = 'cannot use named assignment with %s' % error
+            else:
+                cannot = "can't" if self._normalizer.version < (3, 8) else "cannot"
+                message = ' '.join([cannot, "delete" if is_deletion else "assign to", error])
             self.add_issue(node, message=message)
 
 
-@ErrorFinder.register_rule(type='comp_for')
+@ErrorFinder.register_rule(type='sync_comp_for')
 class _CompForRule(_CheckAssignmentRule):
     message = "asynchronous comprehension outside of an asynchronous function"
 
     def is_issue(self, node):
-        # Some of the nodes here are already used, so no else if
-        expr_list = node.children[1 + int(node.children[0] == 'async')]
+        expr_list = node.children[1]
         if expr_list.type != 'expr_list':  # Already handled.
             self._check_assignment(expr_list)
 
-        return node.children[0] == 'async' \
+        return node.parent.children[0] == 'async' \
             and not self._normalizer.context.is_async_funcdef()
 
 
@@ -995,3 +1040,71 @@ class _ForStmtRule(_CheckAssignmentRule):
         expr_list = for_stmt.children[1]
         if expr_list.type != 'expr_list':  # Already handled.
             self._check_assignment(expr_list)
+
+
+@ErrorFinder.register_rule(type='namedexpr_test')
+class _NamedExprRule(_CheckAssignmentRule):
+    # namedexpr_test: test [':=' test]
+
+    def is_issue(self, namedexpr_test):
+        # assigned name
+        first = namedexpr_test.children[0]
+
+        def search_namedexpr_in_comp_for(node):
+            while True:
+                parent = node.parent
+                if parent is None:
+                    return parent
+                if parent.type == 'sync_comp_for' and parent.children[3] == node:
+                    return parent
+                node = parent
+
+        if search_namedexpr_in_comp_for(namedexpr_test):
+            # [i+1 for i in (i := range(5))]
+            # [i+1 for i in (j := range(5))]
+            # [i+1 for i in (lambda: (j := range(5)))()]
+            message = 'assignment expression cannot be used in a comprehension iterable expression'
+            self.add_issue(namedexpr_test, message=message)
+
+        # defined names
+        exprlist = list()
+
+        def process_comp_for(comp_for):
+            if comp_for.type == 'sync_comp_for':
+                comp = comp_for
+            elif comp_for.type == 'comp_for':
+                comp = comp_for.children[1]
+            exprlist.extend(_get_for_stmt_definition_exprs(comp))
+
+        def search_all_comp_ancestors(node):
+            has_ancestors = False
+            while True:
+                node = search_ancestor(node, 'testlist_comp', 'dictorsetmaker')
+                if node is None:
+                    break
+                for child in node.children:
+                    if child.type in _COMP_FOR_TYPES:
+                        process_comp_for(child)
+                        has_ancestors = True
+                        break
+            return has_ancestors
+
+        # check assignment expressions in comprehensions
+        search_all = search_all_comp_ancestors(namedexpr_test)
+        if search_all:
+            if self._normalizer.context.node.type == 'classdef':
+                message = 'assignment expression within a comprehension ' \
+                          'cannot be used in a class body'
+                self.add_issue(namedexpr_test, message=message)
+
+            namelist = [expr.value for expr in exprlist if expr.type == 'name']
+            if first.type == 'name' and first.value in namelist:
+                # [i := 0 for i, j in range(5)]
+                # [[(i := i) for j in range(5)] for i in range(5)]
+                # [i for i, j in range(5) if True or (i := 1)]
+                # [False and (i := 0) for i, j in range(5)]
+                message = 'assignment expression cannot rebind ' \
+                          'comprehension iteration variable %r' % first.value
+                self.add_issue(namedexpr_test, message=message)
+
+        self._check_assignment(first, is_namedexpr=True)

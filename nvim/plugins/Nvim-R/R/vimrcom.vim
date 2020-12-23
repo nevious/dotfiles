@@ -22,6 +22,9 @@ function ROnJobStdout(job_id, msg)
     if cmd =~ "^call " || cmd  =~ "^let " || cmd =~ "^unlet "
         exe cmd
     elseif cmd != ""
+            if len(cmd) > 128
+                let cmd = substitute(cmd, '^\(.\{128}\).*', '\1', '') . ' [...]'
+            endif
         call RWarningMsg("[" . GetJobTitle(a:job_id) . "] Unknown command: " . cmd)
     endif
 endfunction
@@ -46,7 +49,7 @@ endfunction
 function IsJobRunning(key)
     try
         let chstt =  ch_status(g:rplugin.jobs[a:key])
-    catch
+    catch /.*/
         let chstt = "no"
     endtry
     if chstt == "open"

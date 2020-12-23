@@ -26,6 +26,11 @@ setlocal buftype=nofile
 setlocal nowrap
 setlocal iskeyword=@,48-57,_,.
 setlocal nolist
+setlocal nonumber
+setlocal norelativenumber
+setlocal nocursorline
+setlocal nocursorcolumn
+setlocal nospell
 
 if !exists("g:rplugin.hasmenu")
     let g:rplugin.hasmenu = 0
@@ -35,9 +40,6 @@ endif
 if !exists("s:hasbrowsermenu")
     let s:hasbrowsermenu = 0
 endif
-
-" Current view of the object browser: .GlobalEnv X loaded libraries
-let g:rplugin.curview = "GlobalEnv"
 
 function! UpdateOB(what)
     if a:what == "both"
@@ -60,64 +62,79 @@ function! UpdateOB(what)
         let s:upobcnt = 0
         return "Object_Browser not listed"
     endif
-    if exists("g:rplugin.curbuf") && g:rplugin.curbuf != "Object_Browser"
-        let savesb = &switchbuf
-        set switchbuf=useopen,usetab
-        sil noautocmd sb Object_Browser
-        let rplugin_switchedbuf = 1
-    endif
 
-    setlocal modifiable
-    let curline = line(".")
-    let curcol = col(".")
-    if !exists("curline")
-        let curline = 3
-    endif
-    if !exists("curcol")
-        let curcol = 1
-    endif
-    let save_unnamed_reg = @@
-    sil normal! ggdG
-    let @@ = save_unnamed_reg
     if wht == "GlobalEnv"
         let fcntt = readfile(g:rplugin.tmpdir . "/globenv_" . $NVIMR_ID)
     else
         let fcntt = readfile(g:rplugin.tmpdir . "/liblist_" . $NVIMR_ID)
     endif
-    call setline(1, fcntt)
-    call cursor(curline, curcol)
-    if bufname("%") =~ "Object_Browser"
-        setlocal nomodifiable
-    endif
-    if rplugin_switchedbuf
-        exe "sil noautocmd sb " . g:rplugin.curbuf
-        exe "set switchbuf=" . savesb
+    if exists("*nvim_buf_set_lines")
+        let obcur = nvim_win_get_cursor(g:rplugin.ob_winnr)
+        call nvim_buf_set_option(g:rplugin.ob_buf, "modifiable", v:true)
+        call nvim_buf_set_lines(g:rplugin.ob_buf, 0, nvim_buf_line_count(g:rplugin.ob_buf), 0, fcntt)
+        if obcur[0] <= len(fcntt)
+            call nvim_win_set_cursor(g:rplugin.ob_winnr, obcur)
+        endif
+        call nvim_buf_set_option(g:rplugin.ob_buf, "modifiable", v:false)
+    else
+        if exists("g:rplugin.curbuf") && g:rplugin.curbuf != "Object_Browser"
+            let savesb = &switchbuf
+            set switchbuf=useopen,usetab
+            sil noautocmd sb Object_Browser
+            let rplugin_switchedbuf = 1
+        endif
+
+        setlocal modifiable
+        let curline = line(".")
+        let curcol = col(".")
+        if !exists("curline")
+            let curline = 3
+        endif
+        if !exists("curcol")
+            let curcol = 1
+        endif
+        let save_unnamed_reg = @@
+        sil normal! ggdG
+        let @@ = save_unnamed_reg
+        call setline(1, fcntt)
+        call cursor(curline, curcol)
+        if bufname("%") =~ "Object_Browser"
+            setlocal nomodifiable
+        endif
+        if rplugin_switchedbuf
+            exe "sil noautocmd sb " . g:rplugin.curbuf
+            exe "set switchbuf=" . savesb
+        endif
     endif
     let s:upobcnt = 0
     return "End of UpdateOB()"
 endfunction
 
 function! RBrowserDoubleClick()
+    if line(".") == 2
+        return
+    endif
+
     " Toggle view: Objects in the workspace X List of libraries
     if line(".") == 1
         if g:rplugin.curview == "libraries"
             let g:rplugin.curview = "GlobalEnv"
-            call SendToNvimcom("\004G RBrowserDoubleClick")
+            call JobStdin(g:rplugin.jobs["ClientServer"], "31\n")
         else
             let g:rplugin.curview = "libraries"
-            call SendToNvimcom("\004L RBrowserDoubleClick")
+            call JobStdin(g:rplugin.jobs["ClientServer"], "321\n")
         endif
         return
     endif
 
     " Toggle state of list or data.frame: open X closed
-    let key = RBrowserGetName(0, 1)
+    let key = RBrowserGetName(1, 1)
     let curline = getline(".")
     if g:rplugin.curview == "GlobalEnv"
         if curline =~ "&#.*\t"
-            call SendToNvimcom("\006&" . key)
-        elseif curline =~ "\[#.*\t" || curline =~ "<#.*\t"
-            call SendToNvimcom("\006" . key)
+            " FIXME: lazy objects must be evaluated before being opened.
+        elseif curline =~ "\[#.*\t" || curline =~ "\$#.*\t" || curline =~ "<#.*\t" || curline =~ ":#.*\t"
+            call JobStdin(g:rplugin.jobs["ClientServer"], "33G" . key . "\n")
         else
             let key = RBrowserGetName(0, 0)
             call g:SendCmdToR("str(" . key . ")")
@@ -126,12 +143,8 @@ function! RBrowserDoubleClick()
         if curline =~ "(#.*\t"
             call AskRDoc(key, RBGetPkgName(), 0)
         else
-            let key = substitute(key, '`', '', "g")
-            if key =~ "^package:"
-                call SendToNvimcom("\006" . key)
-            elseif curline =~ "\[#.*\t" || curline =~ "<#.*\t"
-                let key = "package:" . RBGetPkgName() . '-' . key
-                call SendToNvimcom("\006" . key)
+            if key =~ ":$" || curline =~ "\[#.*\t" || curline =~ "\$#.*\t" || curline =~ "<#.*\t" || curline =~ ":#.*\t"
+                call JobStdin(g:rplugin.jobs["ClientServer"], "33L" . key . "\n")
             else
                 let key = RBrowserGetName(0, 0)
                 call g:SendCmdToR("str(" . key . ")")
@@ -198,12 +211,15 @@ function! RBrowserFindParent(word, curline, curpos)
     let curpos = a:curpos
     while curline > 1 && curpos >= a:curpos
         let curline -= 1
-        let line = substitute(getline(curline), "	.*", "", "")
+        let line = substitute(getline(curline), "\x09.*", "", "")
         let curpos = stridx(line, '[#')
         if curpos == -1
-            let curpos = stridx(line, '<#')
+            let curpos = stridx(line, '$#')
             if curpos == -1
-                let curpos = a:curpos
+                let curpos = stridx(line, '<#')
+                if curpos == -1
+                    let curpos = a:curpos
+                endif
             endif
         endif
     endwhile
@@ -220,13 +236,15 @@ function! RBrowserFindParent(word, curline, curpos)
     if curline > 1
         let line = substitute(line, '^.\{-}\(.\)#', '\1#', "")
         let line = substitute(line, '^ *', '', "")
-        if line =~ " " || line =~ '^.#[0-9]' || line =~ '-'
+        if line =~ " " || line =~ '^.#[0-9]' || line =~ '-' || line =~ '^.#' . s:reserved
             let line = substitute(line, '\(.\)#\(.*\)$', '\1#`\2`', "")
         endif
         if line =~ '<#'
             let word = substitute(line, '.*<#', "", "") . '@' . a:word
-        else
+        elseif line =~ '\[#'
             let word = substitute(line, '.*\[#', "", "") . '$' . a:word
+        else
+            let word = substitute(line, '.*\$#', "", "") . '$' . a:word
         endif
         if curpos != spacelimit
             let word = RBrowserFindParent(word, line("."), curpos)
@@ -254,26 +272,27 @@ endfunction
 
 function! RBrowserGetName(cleantail, cleantick)
     let line = getline(".")
-    if line =~ "^$"
+    if line =~ "^$" || line(".") < 3
         return ""
     endif
 
     let curpos = stridx(line, "#")
     let word = substitute(line, '.\{-}\(.#\)\(.\{-}\)\t.*', '\2\1', '')
     let word = substitute(word, '\[#$', '$', '')
+    let word = substitute(word, '\$#$', '$', '')
     let word = substitute(word, '<#$', '@', '')
     let word = substitute(word, '.#$', '', '')
 
-    if word =~ ' ' || word =~ '^[0-9]' || word =~ '-'
+    if word =~ ' ' || word =~ '^[0-9]' || word =~ '-' || word =~ '^' . s:reserved . '$'
         let word = '`' . word . '`'
     endif
 
-    if (g:rplugin.curview == "GlobalEnv" && curpos == 4) || (g:rplugin.curview == "libraries" && curpos == 3)
+    if curpos == 4
         " top level object
         let word = substitute(word, '\$\[\[', '[[', "g")
         let word = RBrowserCleanTailTick(word, a:cleantail, a:cleantick)
         if g:rplugin.curview == "libraries"
-            return "package:" . substitute(word, "#", "", "")
+            return word . ':'
         else
             return word
         endif
@@ -307,7 +326,13 @@ function! RBrowserGetName(cleantail, cleantick)
 endfunction
 
 function! OnOBBufUnload()
-    call SendToNvimcom("\004Stop updating info [OB BufUnload].")
+    if g:R_hi_fun_globenv < 2
+        call SendToNvimcom("\003" . $NVIMR_ID)
+    endif
+endfunction
+
+function! PrintListTree()
+    call JobStdin(g:rplugin.jobs["ClientServer"], "37\n")
 endfunction
 
 nnoremap <buffer><silent> <CR> :call RBrowserDoubleClick()<CR>
@@ -328,6 +353,8 @@ endif
 au BufEnter <buffer> stopinsert
 au BufUnload <buffer> call OnOBBufUnload()
 
+let s:reserved = '\(if\|else\|repeat\|while\|function\|for\|in\|next\|break\|TRUE\|FALSE\|NULL\|Inf\|NaN\|NA\|NA_integer_\|NA_real_\|NA_complex_\|NA_character_\)'
+
 let s:envstring = tolower($LC_MESSAGES . $LC_ALL . $LANG)
 if s:envstring =~ "utf-8" || s:envstring =~ "utf8"
     let s:isutf8 = 1
@@ -337,8 +364,6 @@ endif
 unlet s:envstring
 
 call setline(1, ".GlobalEnv | Libraries")
-
-call RSourceOtherScripts()
 
 let &cpo = s:cpo_save
 unlet s:cpo_save

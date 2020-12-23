@@ -38,6 +38,10 @@ if exists('&ofu')
     endif
 endif
 
+" Plugins that automatically run omni completion will work better if they
+" don't have to wait for the omni list to be built.
+autocmd InsertEnter <buffer> call ROnInsertEnter()
+
 " Set the name of the Object Browser caption if not set yet
 let s:tnr = tabpagenr()
 if !exists("b:objbrtitle")
@@ -66,9 +70,11 @@ if !exists("b:rplugin_new_libs")
     let b:rplugin_new_libs = 0
 endif
 " When using as a global plugin for non R files, RCheckLibList will not exist
-if exists("*RCheckLibList")
+if exists("*RCheckLibList") && !exists("*nvim_buf_set_option")
     autocmd BufEnter <buffer> call RCheckLibList()
 endif
+
+autocmd! InsertLeave <buffer> if pumvisible() == 0 | pclose | endif
 
 if g:R_assign == 3
     iabb <buffer> _ <-

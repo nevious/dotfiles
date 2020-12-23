@@ -30,7 +30,7 @@ b = [6,7]
 #? int()
 b[8-7]
 # Something unreasonable:
-#?
+#? int()
 b['']
 
 # -----------------
@@ -45,8 +45,19 @@ b[int():]
 #? list()
 b[:]
 
-#?
+#? 3
+b[:]
+
+#? int()
 b[:, 1]
+#? int()
+b[:1, 1]
+#? int()
+b[1:1, 1]
+#? int()
+b[1:1:, ...]
+#? int()
+b[1:1:5, ...]
 
 class _StrangeSlice():
     def __getitem__(self, sliced):
@@ -161,7 +172,7 @@ def a(): return ''
 #? str()
 (a)()
 #? str()
-(a)().replace()
+(a)().title()
 #? int()
 (tuple).index()
 #? int()
@@ -209,8 +220,7 @@ g
 dic2 = {'asdf': 3, 'b': 'str'}
 #? int()
 dic2['asdf']
-# TODO for now get doesn't work properly when used with a literal.
-#? None
+#? None int() str()
 dic2.get('asdf')
 
 # string literal
@@ -254,10 +264,16 @@ def y(a):
 #?
 y(**d)
 
+#? str()
+d['a']
+
 # problem with more complicated casts
 dic = {str(key): ''}
 #? str()
 dic['']
+
+# Just skip Python 2 tests from here. EoL soon, I'm too lazy for it.
+# python > 2.7
 
 
 for x in {1: 3.0, '': 1j}:
@@ -268,12 +284,32 @@ for x in {1: 3.0, '': 1j}:
 dict().values().__iter__
 
 d = dict(a=3, b='')
+x, = d.values()
 #? int() str()
-d.values()[0]
+x
 #? int()
 d['a']
-#? int() None
+#? int() str() None
 d.get('a')
+
+some_dct = dict({'a': 1, 'b': ''}, a=1.0)
+#? float()
+some_dct['a']
+#? str()
+some_dct['b']
+#? int() float() str()
+some_dct['c']
+
+class Foo:
+    pass
+
+objects = {object(): 1, Foo: '', Foo(): 3.0}
+#? int() float() str()
+objects[Foo]
+#? int() float() str()
+objects[Foo()]
+#? int() float() str()
+objects['']
 
 # -----------------
 # with variable as index
@@ -437,7 +473,7 @@ def test_func():
 #? int()
 tuple({1})[0]
 
-# python >= 3.4
+# python > 2.7
 # -----------------
 # PEP 3132 Extended Iterable Unpacking (star unpacking)
 # -----------------
@@ -445,7 +481,7 @@ tuple({1})[0]
 a, *b, c = [1, 'b', list, dict]
 #? int()
 a
-#? str()
+#?
 b
 #? list
 c
@@ -454,12 +490,14 @@ c
 a, *b, *c = [1, 'd', list]
 #? int()
 a
-#? str()
+#?
 b
-#? list
+#?
 c
 
 lc = [x for a, *x in [(1, '', 1.0)]]
 
 #?
 lc[0][0]
+#?
+lc[0][1]

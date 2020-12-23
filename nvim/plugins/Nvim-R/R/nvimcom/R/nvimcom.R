@@ -23,15 +23,10 @@ NvimcomEnv$pkgdescr <- list()
     if(file.exists(paste0(Sys.getenv("NVIMR_TMPDIR"), "/start_options.R"))){
         source(paste0(Sys.getenv("NVIMR_TMPDIR"), "/start_options.R"))
     } else {
-        options(nvimcom.opendf = TRUE)
-        options(nvimcom.openlist = FALSE)
         options(nvimcom.allnames = FALSE)
         options(nvimcom.texerrs = TRUE)
-        options(nvimcom.labelerr = TRUE)
-        options(nvimcom.higlobfun = TRUE)
         options(nvimcom.setwidth = TRUE)
         options(nvimcom.nvimpager = TRUE)
-        options(nvimcom.lsenvtol = 500)
         options(nvimcom.delim = "\t")
     }
     if(getOption("nvimcom.nvimpager"))
@@ -48,27 +43,18 @@ NvimcomEnv$pkgdescr <- list()
 
     if(interactive() && termenv != "" && termenv != "dumb" && Sys.getenv("NVIMR_COMPLDIR") != ""){
         dir.create(Sys.getenv("NVIMR_COMPLDIR"), showWarnings = FALSE)
-        if(as.integer(getOption("nvimcom.lsenvtol")) < 10)
-            options(nvimcom.lsenvtol = 10)
-        if(as.integer(getOption("nvimcom.lsenvtol")) > 10000)
-            options(nvimcom.lsenvtol = 10000)
         .C("nvimcom_Start",
            as.integer(getOption("nvimcom.verbose")),
-           as.integer(getOption("nvimcom.opendf")),
-           as.integer(getOption("nvimcom.openlist")),
            as.integer(getOption("nvimcom.allnames")),
-           as.integer(getOption("nvimcom.labelerr")),
-           as.integer(getOption("nvimcom.higlobfun")),
            as.integer(getOption("nvimcom.setwidth")),
            path.package("nvimcom"),
            as.character(utils::packageVersion("nvimcom")),
            paste(paste0(version$major, ".", version$minor),
                   getOption("OutDec"),
-                  getOption("prompt"),
+                  gsub("\n", "#N#", getOption("prompt")),
                   getOption("continue"),
                   paste(.packages(), collapse = " "),
                   sep = "\x02"),
-           as.integer(getOption("nvimcom.lsenvtol")),
            PACKAGE="nvimcom")
     }
 }
@@ -103,7 +89,7 @@ nvim.edit <- function(name, file, title)
     sink()
 
     .C("nvimcom_msg_to_nvim",
-       paste0("ShowRObject('", initial, "')"),
+       paste0("EditRObject('", initial, "')"),
        PACKAGE="nvimcom")
 
     while(file.exists(waitf))
@@ -125,7 +111,17 @@ nvim_capture_source_output <- function(s, o)
     .C("nvimcom_msg_to_nvim", paste0("GetROutput('", o, "')"), PACKAGE="nvimcom")
 }
 
-nvim_viewdf <- function(oname, fenc = "")
+nvim_dput <- function(oname, howto = "tabnew")
+{
+    sink(paste0(Sys.getenv("NVIMR_TMPDIR"), "/Rinsert"))
+    eval(parse(text = paste0("dput(", oname, ")")))
+    sink()
+    .C("nvimcom_msg_to_nvim",
+       paste0('ShowRObj("', howto, '", "', oname, '", "r")'),
+       PACKAGE="nvimcom")
+}
+
+nvim_viewobj <- function(oname, fenc = "", nrows = NULL, howto = "tabnew", R_df_viewer = NULL)
 {
     if(is.data.frame(oname) || is.matrix(oname)){
         # Only when the rkeyword includes "::"
@@ -154,6 +150,15 @@ nvim_viewdf <- function(oname, fenc = "")
         }
     }
     if(is.data.frame(o) || is.matrix(o)){
+        if(!is.null(nrows)){
+          o <- head(o, n = nrows)
+        }
+        if(!is.null(R_df_viewer)){
+            .C("nvimcom_msg_to_nvim",
+               paste0("g:SendCmdToR(printf(g:R_df_viewer, '", oname, "'))"),
+               PACKAGE="nvimcom")
+            return(invisible(NULL))
+        }
         if(getOption("nvimcom.delim") == "\t"){
             write.table(o, sep = "\t", row.names = FALSE, quote = FALSE,
                         fileEncoding = fenc,
@@ -163,18 +168,20 @@ nvim_viewdf <- function(oname, fenc = "")
                         fileEncoding = fenc,
                         file = paste0(Sys.getenv("NVIMR_TMPDIR"), "/Rinsert"))
         }
-        .C("nvimcom_msg_to_nvim", paste0("RViewDF('", oname, "')"), PACKAGE="nvimcom")
+        .C("nvimcom_msg_to_nvim", paste0("RViewDF('", oname, "', '", howto, "')"), PACKAGE="nvimcom")
     } else {
-        .C("nvimcom_msg_to_nvim",
-           paste0("RWarningMsg('", '"', oname, '"', " is not a data.frame or matrix')"),
-           PACKAGE="nvimcom")
+        nvim_dput(oname, howto)
     }
     return(invisible(NULL))
 }
 
 NvimR.source <- function(..., print.eval = TRUE, spaced = FALSE)
 {
-    base::source(getOption("nvimcom.source.path"), ..., print.eval = print.eval, spaced = spaced)
+    if (with(R.Version(), paste(major, minor, sep = '.')) >= '3.4.0') {
+        base::source(getOption("nvimcom.source.path"), ..., print.eval = print.eval, spaced = spaced)
+    } else {
+        base::source(getOption("nvimcom.source.path"), ..., print.eval = print.eval)
+    }
 }
 
 NvimR.selection <- function(..., local = parent.frame()) NvimR.source(..., local = local)
@@ -210,7 +217,7 @@ nvim_format <- function(l1, l2, wco)
     return(invisible(NULL))
 }
 
-nvim_insert <- function(cmd, type = "default")
+nvim_insert <- function(cmd, howto = "tabnew")
 {
     try(ok <- capture.output(cmd, file = paste0(Sys.getenv("NVIMR_TMPDIR"), "/Rinsert")))
     if(inherits(ok, "try-error")){
@@ -219,7 +226,7 @@ nvim_insert <- function(cmd, type = "default")
            PACKAGE="nvimcom")
     } else {
         .C("nvimcom_msg_to_nvim",
-           paste0('FinishRInsert("', type , '")'),
+           paste0('FinishRInsert("', howto, '")'),
            PACKAGE="nvimcom")
     }
     return(invisible(NULL))

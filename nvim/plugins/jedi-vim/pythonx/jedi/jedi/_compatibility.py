@@ -2,22 +2,49 @@
 To ensure compatibility from Python ``2.7`` - ``3.x``, a module has been
 created. Clearly there is huge need to use conforming syntax.
 """
+from __future__ import print_function
+import atexit
 import errno
+import functools
 import sys
 import os
 import re
 import pkgutil
 import warnings
-import inspect
 import subprocess
+import weakref
 try:
     import importlib
 except ImportError:
     pass
+from zipimport import zipimporter
+
+from jedi.file_io import KnownContentFileIO, ZipFileIO
 
 is_py3 = sys.version_info[0] >= 3
 is_py35 = is_py3 and sys.version_info[1] >= 5
 py_version = int(str(sys.version_info[0]) + str(sys.version_info[1]))
+
+
+if sys.version_info[:2] < (3, 5):
+    """
+    A super-minimal shim around listdir that behave like
+    scandir for the information we need.
+    """
+    class _DirEntry:
+
+        def __init__(self, name, basepath):
+            self.name = name
+            self.basepath = basepath
+
+        def is_dir(self):
+            path_for_name = os.path.join(self.basepath, self.name)
+            return os.path.isdir(path_for_name)
+
+    def scandir(dir):
+        return [_DirEntry(name, dir) for name in os.listdir(dir)]
+else:
+    from os import scandir
 
 
 class DummyFile(object):
@@ -55,7 +82,7 @@ def find_module_py34(string, path=None, full_name=None, is_global_search=True):
                 # This is a namespace package.
                 full_name = string if not path else full_name
                 implicit_ns_info = ImplicitNSInfo(full_name, spec.submodule_search_locations._path)
-                return None, implicit_ns_info, False
+                return implicit_ns_info, True
             break
 
     return find_module_py33(string, path, loader)
@@ -81,47 +108,89 @@ def find_module_py33(string, path=None, loader=None, full_name=None, is_global_s
     if loader is None:
         raise ImportError("Couldn't find a loader for {}".format(string))
 
+    return _from_loader(loader, string)
+
+
+def _from_loader(loader, string):
     try:
-        is_package = loader.is_package(string)
-        if is_package:
-            if hasattr(loader, 'path'):
-                module_path = os.path.dirname(loader.path)
-            else:
-                # At least zipimporter does not have path attribute
-                module_path = os.path.dirname(loader.get_filename(string))
-            if hasattr(loader, 'archive'):
-                module_file = DummyFile(loader, string)
-            else:
-                module_file = None
-        else:
-            module_path = loader.get_filename(string)
-            module_file = DummyFile(loader, string)
+        is_package_method = loader.is_package
     except AttributeError:
-        # ExtensionLoader has not attribute get_filename, instead it has a
-        # path attribute that we can use to retrieve the module path
-        try:
-            module_path = loader.path
-            module_file = DummyFile(loader, string)
-        except AttributeError:
-            module_path = string
-            module_file = None
-        finally:
-            is_package = False
+        is_package = False
+    else:
+        is_package = is_package_method(string)
+    try:
+        get_filename = loader.get_filename
+    except AttributeError:
+        return None, is_package
+    else:
+        module_path = cast_path(get_filename(string))
 
-    if hasattr(loader, 'archive'):
-        module_path = loader.archive
+    # To avoid unicode and read bytes, "overwrite" loader.get_source if
+    # possible.
+    try:
+        f = type(loader).get_source
+    except AttributeError:
+        raise ImportError("get_source was not defined on loader")
 
-    return module_file, module_path, is_package
+    if is_py3 and f is not importlib.machinery.SourceFileLoader.get_source:
+        # Unfortunately we are reading unicode here, not bytes.
+        # It seems hard to get bytes, because the zip importer
+        # logic just unpacks the zip file and returns a file descriptor
+        # that we cannot as easily access. Therefore we just read it as
+        # a string in the cases where get_source was overwritten.
+        code = loader.get_source(string)
+    else:
+        code = _get_source(loader, string)
+
+    if code is None:
+        return None, is_package
+    if isinstance(loader, zipimporter):
+        return ZipFileIO(module_path, code, cast_path(loader.archive)), is_package
+
+    return KnownContentFileIO(module_path, code), is_package
 
 
-def find_module_pre_py34(string, path=None, full_name=None, is_global_search=True):
+def _get_source(loader, fullname):
+    """
+    This method is here as a replacement for SourceLoader.get_source. That
+    method returns unicode, but we prefer bytes.
+    """
+    path = loader.get_filename(fullname)
+    try:
+        return loader.get_data(path)
+    except OSError:
+        raise ImportError('source not available through get_data()',
+                          name=fullname)
+
+
+def find_module_pre_py3(string, path=None, full_name=None, is_global_search=True):
     # This import is here, because in other places it will raise a
     # DeprecationWarning.
     import imp
     try:
         module_file, module_path, description = imp.find_module(string, path)
         module_type = description[2]
-        return module_file, module_path, module_type is imp.PKG_DIRECTORY
+        is_package = module_type is imp.PKG_DIRECTORY
+        if is_package:
+            # In Python 2 directory package imports are returned as folder
+            # paths, not __init__.py paths.
+            p = os.path.join(module_path, '__init__.py')
+            try:
+                module_file = open(p)
+                module_path = p
+            except FileNotFoundError:
+                pass
+        elif module_type != imp.PY_SOURCE:
+            if module_file is not None:
+                module_file.close()
+            module_file = None
+
+        if module_file is None:
+            return None, is_package
+
+        with module_file:
+            code = module_file.read()
+        return KnownContentFileIO(cast_path(module_path), code), is_package
     except ImportError:
         pass
 
@@ -130,26 +199,13 @@ def find_module_pre_py34(string, path=None, full_name=None, is_global_search=Tru
     for item in path:
         loader = pkgutil.get_importer(item)
         if loader:
-            try:
-                loader = loader.find_module(string)
-                if loader:
-                    is_package = loader.is_package(string)
-                    is_archive = hasattr(loader, 'archive')
-                    module_path = loader.get_filename(string)
-                    if is_package:
-                        module_path = os.path.dirname(module_path)
-                    if is_archive:
-                        module_path = loader.archive
-                    file = None
-                    if not is_package or is_archive:
-                        file = DummyFile(loader, string)
-                    return file, module_path, is_package
-            except ImportError:
-                pass
+            loader = loader.find_module(string)
+            if loader is not None:
+                return _from_loader(loader, string)
     raise ImportError("No module named {}".format(string))
 
 
-find_module = find_module_py34 if is_py3 else find_module_pre_py34
+find_module = find_module_py34 if is_py3 else find_module_pre_py3
 find_module.__doc__ = """
 Provides information about a module.
 
@@ -159,65 +215,6 @@ tuple containin an open file for the module (if not builtin), the filename
 or the name of the module if it is a builtin one and a boolean indicating
 if the module is contained in a package.
 """
-
-
-def _iter_modules(paths, prefix=''):
-    # Copy of pkgutil.iter_modules adapted to work with namespaces
-
-    for path in paths:
-        importer = pkgutil.get_importer(path)
-
-        if not isinstance(importer, importlib.machinery.FileFinder):
-            # We're only modifying the case for FileFinder. All the other cases
-            # still need to be checked (like zip-importing). Do this by just
-            # calling the pkgutil version.
-            for mod_info in pkgutil.iter_modules([path], prefix):
-                yield mod_info
-            continue
-
-        # START COPY OF pkutils._iter_file_finder_modules.
-        if importer.path is None or not os.path.isdir(importer.path):
-            return
-
-        yielded = {}
-
-        try:
-            filenames = os.listdir(importer.path)
-        except OSError:
-            # ignore unreadable directories like import does
-            filenames = []
-        filenames.sort()  # handle packages before same-named modules
-
-        for fn in filenames:
-            modname = inspect.getmodulename(fn)
-            if modname == '__init__' or modname in yielded:
-                continue
-
-            # jedi addition: Avoid traversing special directories
-            if fn.startswith('.') or fn == '__pycache__':
-                continue
-
-            path = os.path.join(importer.path, fn)
-            ispkg = False
-
-            if not modname and os.path.isdir(path) and '.' not in fn:
-                modname = fn
-                # A few jedi modifications: Don't check if there's an
-                # __init__.py
-                try:
-                    os.listdir(path)
-                except OSError:
-                    # ignore unreadable directories like import does
-                    continue
-                ispkg = True
-
-            if modname and '.' not in modname:
-                yielded[modname] = 1
-                yield importer, prefix + modname, ispkg
-        # END COPY
-
-
-iter_modules = _iter_modules if py_version >= 34 else pkgutil.iter_modules
 
 
 class ImplicitNSInfo(object):
@@ -261,17 +258,6 @@ Usage::
     reraise(Exception, sys.exc_info()[2])
 
 """
-
-
-class Python3Method(object):
-    def __init__(self, func):
-        self.func = func
-
-    def __get__(self, obj, objtype):
-        if obj is None:
-            return lambda *args, **kwargs: self.func(*args, **kwargs)
-        else:
-            return lambda *args, **kwargs: self.func(obj, *args, **kwargs)
 
 
 def use_metaclass(meta, *bases):
@@ -344,14 +330,21 @@ except NameError:
     FileNotFoundError = IOError
 
 try:
-    NotADirectoryError = NotADirectoryError
+    IsADirectoryError = IsADirectoryError
 except NameError:
-    NotADirectoryError = IOError
+    IsADirectoryError = IOError
 
 try:
     PermissionError = PermissionError
 except NameError:
     PermissionError = IOError
+
+try:
+    NotADirectoryError = NotADirectoryError
+except NameError:
+    class NotADirectoryError(Exception):
+        # Don't implement this for Python 2 anymore.
+        pass
 
 
 def no_unicode_pprint(dct):
@@ -364,14 +357,6 @@ def no_unicode_pprint(dct):
     import pprint
     s = pprint.pformat(dct)
     print(re.sub("u'", "'", s))
-
-
-def print_to_stderr(*args):
-    if is_py3:
-        eval("print(*args, file=sys.stderr)")
-    else:
-        print >> sys.stderr, args
-    sys.stderr.flush()
 
 
 def utf8_repr(func):
@@ -403,64 +388,6 @@ try:
     import cPickle as pickle
 except ImportError:
     import pickle
-if sys.version_info[:2] == (3, 3):
-    """
-    Monkeypatch the unpickler in Python 3.3. This is needed, because the
-    argument `encoding='bytes'` is not supported in 3.3, but badly needed to
-    communicate with Python 2.
-    """
-
-    class NewUnpickler(pickle._Unpickler):
-        dispatch = dict(pickle._Unpickler.dispatch)
-
-        def _decode_string(self, value):
-            # Used to allow strings from Python 2 to be decoded either as
-            # bytes or Unicode strings.  This should be used only with the
-            # STRING, BINSTRING and SHORT_BINSTRING opcodes.
-            if self.encoding == "bytes":
-                return value
-            else:
-                return value.decode(self.encoding, self.errors)
-
-        def load_string(self):
-            data = self.readline()[:-1]
-            # Strip outermost quotes
-            if len(data) >= 2 and data[0] == data[-1] and data[0] in b'"\'':
-                data = data[1:-1]
-            else:
-                raise pickle.UnpicklingError("the STRING opcode argument must be quoted")
-            self.append(self._decode_string(pickle.codecs.escape_decode(data)[0]))
-        dispatch[pickle.STRING[0]] = load_string
-
-        def load_binstring(self):
-            # Deprecated BINSTRING uses signed 32-bit length
-            len, = pickle.struct.unpack('<i', self.read(4))
-            if len < 0:
-                raise pickle.UnpicklingError("BINSTRING pickle has negative byte count")
-            data = self.read(len)
-            self.append(self._decode_string(data))
-        dispatch[pickle.BINSTRING[0]] = load_binstring
-
-        def load_short_binstring(self):
-            len = self.read(1)[0]
-            data = self.read(len)
-            self.append(self._decode_string(data))
-        dispatch[pickle.SHORT_BINSTRING[0]] = load_short_binstring
-
-    def load(file, fix_imports=True, encoding="ASCII", errors="strict"):
-        return NewUnpickler(file, fix_imports=fix_imports,
-                            encoding=encoding, errors=errors).load()
-
-    def loads(s, fix_imports=True, encoding="ASCII", errors="strict"):
-        if isinstance(s, str):
-            raise TypeError("Can't load pickle from unicode string")
-        file = pickle.io.BytesIO(s)
-        return NewUnpickler(file, fix_imports=fix_imports,
-                            encoding=encoding, errors=errors).load()
-
-    pickle.Unpickler = NewUnpickler
-    pickle.load = load
-    pickle.loads = loads
 
 
 def pickle_load(file):
@@ -476,8 +403,24 @@ def pickle_load(file):
         raise
 
 
+def _python2_dct_keys_to_unicode(data):
+    """
+    Python 2 stores object __dict__ entries as bytes, not unicode, correct it
+    here. Python 2 can deal with both, Python 3 expects unicode.
+    """
+    if isinstance(data, tuple):
+        return tuple(_python2_dct_keys_to_unicode(x) for x in data)
+    elif isinstance(data, list):
+        return list(_python2_dct_keys_to_unicode(x) for x in data)
+    elif hasattr(data, '__dict__') and type(data.__dict__) == dict:
+        data.__dict__ = {unicode(k): v for k, v in data.__dict__.items()}
+    return data
+
+
 def pickle_dump(data, file, protocol):
     try:
+        if not is_py3:
+            data = _python2_dct_keys_to_unicode(data)
         pickle.dump(data, file, protocol)
         # On Python 3.3 flush throws sometimes an error even though the writing
         # operation should be completed.
@@ -592,3 +535,97 @@ def which(cmd, mode=os.F_OK | os.X_OK, path=None):
                 if _access_check(name, mode):
                     return name
     return None
+
+
+if not is_py3:
+    # Simplified backport of Python 3 weakref.finalize:
+    # https://github.com/python/cpython/blob/ded4737989316653469763230036b04513cb62b3/Lib/weakref.py#L502-L662
+    class finalize(object):
+        """Class for finalization of weakrefable objects.
+
+        finalize(obj, func, *args, **kwargs) returns a callable finalizer
+        object which will be called when obj is garbage collected. The
+        first time the finalizer is called it evaluates func(*arg, **kwargs)
+        and returns the result. After this the finalizer is dead, and
+        calling it just returns None.
+
+        When the program exits any remaining finalizers will be run.
+        """
+
+        # Finalizer objects don't have any state of their own.
+        # This ensures that they cannot be part of a ref-cycle.
+        __slots__ = ()
+        _registry = {}
+
+        def __init__(self, obj, func, *args, **kwargs):
+            info = functools.partial(func, *args, **kwargs)
+            info.weakref = weakref.ref(obj, self)
+            self._registry[self] = info
+
+        # To me it's an absolute mystery why in Python 2 we need _=None. It
+        # makes really no sense since it's never really called. Then again it
+        # might be called by Python 2.7 itself, but weakref.finalize is not
+        # documented in Python 2 and therefore shouldn't be randomly called.
+        # We never call this stuff with a parameter and therefore this
+        # parameter should not be needed. But it is. ~dave
+        def __call__(self, _=None):
+            """Return func(*args, **kwargs) if alive."""
+            info = self._registry.pop(self, None)
+            if info:
+                return info()
+
+        @classmethod
+        def _exitfunc(cls):
+            if not cls._registry:
+                return
+            for finalizer in list(cls._registry):
+                try:
+                    finalizer()
+                except Exception:
+                    sys.excepthook(*sys.exc_info())
+                assert finalizer not in cls._registry
+
+    atexit.register(finalize._exitfunc)
+    weakref.finalize = finalize
+
+
+if is_py3 and sys.version_info[1] > 5:
+    from inspect import unwrap
+else:
+    # Only Python >=3.6 does properly limit the amount of unwraps. This is very
+    # relevant in the case of unittest.mock.patch.
+    # Below is the implementation of Python 3.7.
+    def unwrap(func, stop=None):
+        """Get the object wrapped by *func*.
+
+       Follows the chain of :attr:`__wrapped__` attributes returning the last
+       object in the chain.
+
+       *stop* is an optional callback accepting an object in the wrapper chain
+       as its sole argument that allows the unwrapping to be terminated early if
+       the callback returns a true value. If the callback never returns a true
+       value, the last object in the chain is returned as usual. For example,
+       :func:`signature` uses this to stop unwrapping if any object in the
+       chain has a ``__signature__`` attribute defined.
+
+       :exc:`ValueError` is raised if a cycle is encountered.
+
+        """
+        if stop is None:
+            def _is_wrapper(f):
+                return hasattr(f, '__wrapped__')
+        else:
+            def _is_wrapper(f):
+                return hasattr(f, '__wrapped__') and not stop(f)
+        f = func  # remember the original func for error reporting
+        # Memoise by id to tolerate non-hashable objects, but store objects to
+        # ensure they aren't destroyed, which would allow their IDs to be reused.
+        memo = {id(f): f}
+        recursion_limit = sys.getrecursionlimit()
+        while _is_wrapper(func):
+            func = func.__wrapped__
+            id_func = id(func)
+            if (id_func in memo) or (len(memo) >= recursion_limit):
+                raise ValueError('wrapper loop when unwrapping {!r}'.format(f))
+            memo[id_func] = func
+        return func

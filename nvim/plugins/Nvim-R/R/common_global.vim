@@ -26,6 +26,9 @@
 " used.
 "==========================================================================
 
+set encoding=utf-8
+scriptencoding utf-8
+
 " Check if Vim-R-plugin is installed
 if exists("*WaitVimComStart")
     echohl WarningMsg
@@ -48,39 +51,80 @@ let g:rplugin.debug_info = {}
 " Functions that are common to r, rnoweb, rhelp and rdoc
 "==========================================================================
 
+function CloseRWarn(timer)
+    let id = win_id2win(s:float_warn)
+    if id > 0
+        call nvim_win_close(s:float_warn, 1)
+    endif
+endfunction
+
+function RFloatWarn(wmsg)
+    let fmsg = ' ' . FormatTxt(a:wmsg, ' ', " \n ", 60)
+    let fmsgl = split(fmsg, "\n")
+    let realwidth = 10
+    for lin in fmsgl
+        if strdisplaywidth(lin) > realwidth
+            let realwidth = strdisplaywidth(lin)
+        endif
+    endfor
+    let wht = len(fmsgl) > 3 ? 3 : len(fmsgl)
+    if has('nvim')
+        if !exists('s:warn_buf')
+            let s:warn_buf = nvim_create_buf(v:false, v:true)
+            call setbufvar(s:warn_buf, '&buftype', 'nofile')
+            call setbufvar(s:warn_buf, '&bufhidden', 'hide')
+            call setbufvar(s:warn_buf, '&swapfile', 0)
+            call setbufvar(s:warn_buf, '&tabstop', 2)
+            call setbufvar(s:warn_buf, '&undolevels', -1)
+        endif
+        call nvim_buf_set_option(s:warn_buf, 'syntax', 'off')
+        call nvim_buf_set_lines(s:warn_buf, 0, -1, v:true, fmsgl)
+        let opts = {'relative': 'editor', 'width': realwidth, 'height': wht,
+                    \ 'col': winwidth(0) - realwidth,
+                    \ 'row': &lines - 3 - wht, 'anchor': 'NW', 'style': 'minimal'}
+        let s:float_warn = nvim_open_win(s:warn_buf, 0, opts)
+        call nvim_win_set_option(s:float_warn, 'winhl', 'Normal:WarningMsg')
+        call timer_start(2000 * len(fmsgl), 'CloseRWarn')
+    else
+        let fline = &lines - 2 - wht
+        let fcol = winwidth(0) - realwidth
+        let s:float_warn = popup_create(fmsgl, #{
+                    \ line: fline,
+                    \ col: fcol,
+                    \ highlight: 'WarningMsg',
+                    \ time: 2000 * len(fmsgl),
+                    \ })
+    endif
+endfunction
+
 function RWarningMsg(wmsg)
     if v:vim_did_enter == 0
         exe 'autocmd VimEnter * call RWarningMsg("' . escape(a:wmsg, '"') . '")'
         return
+    endif
+    if mode() == 'i' && (has('nvim-0.4.3') || has('patch-8.1.1705'))
+        call RFloatWarn(a:wmsg)
     endif
     echohl WarningMsg
     echomsg a:wmsg
     echohl None
 endfunction
 
-if has("win32")
-    let s:nvv = "0.2.1"
-else
-    let s:nvv = "0.2.0"
-endif
-
 if has("nvim")
-    if !has("nvim-" . s:nvv)
-        call RWarningMsg("Nvim-R requires Neovim >= " . s:nvv . ".")
+    if !has("nvim-0.3.4")
+        call RWarningMsg("Nvim-R requires Neovim >= 0.3.4.")
         let g:rplugin.failed = 1
         finish
     endif
-elseif v:version < "800"
-    call RWarningMsg("Nvim-R requires either Neovim >= " . s:nvv . " or Vim >= 8.0.")
+elseif v:version < "801"
+    call RWarningMsg("Nvim-R requires either Neovim >= 0.3.4 or Vim >= 8.1.")
     let g:rplugin.failed = 1
     finish
 elseif !has("channel") || !has("job")
-    call RWarningMsg("Nvim-R requires either Neovim >= " . s:nvv . " or Vim >= 8.0.\nIf using Vim, it must have been compiled with both +channel and +job features.\n")
+    call RWarningMsg("Nvim-R requires either Neovim >= 0.3.4 or Vim >= 8.1.\nIf using Vim, it must have been compiled with both +channel and +job features.\n")
     let g:rplugin.failed = 1
     finish
 endif
-
-unlet s:nvv
 
 function ReplaceUnderS()
     if &filetype != "r" && b:IsInRCode(0) == 0
@@ -489,7 +533,18 @@ function ShowRSysLog(slog, fname, msg)
     sleep 1
 endfunction
 
-function CheckNvimcomVersion()
+function RSetDefaultPkg()
+    if $R_DEFAULT_PACKAGES == ""
+        let $R_DEFAULT_PACKAGES = "datasets,utils,grDevices,graphics,stats,methods,nvimcom"
+    elseif $R_DEFAULT_PACKAGES !~ "nvimcom"
+        let $R_DEFAULT_PACKAGES .= ",nvimcom"
+    endif
+    if exists("g:RStudio_cmd") && $R_DEFAULT_PACKAGES !~ "rstudioapi"
+        let $R_DEFAULT_PACKAGES .= ",rstudioapi"
+    endif
+endfunction
+
+function CheckNvimcomVersion(build)
     let neednew = 0
     if isdirectory(substitute(s:nvimcom_home, "nvimcom", "", "") . "00LOCK-nvimcom")
         let s:has_warning = 1
@@ -515,6 +570,10 @@ function CheckNvimcomVersion()
                 endif
             endif
         endif
+    endif
+
+    if a:build == 0
+        return !neednew
     endif
 
     " Nvim-R might have been installed as root in a non writable directory.
@@ -552,12 +611,13 @@ function CheckNvimcomVersion()
             return 0
         endif
         let libpaths = readfile(g:rplugin.tmpdir . "/libpaths")
+        call map(libpaths, 'substitute(expand(v:val), "\\", "/", "g")')
         let g:rplugin.debug_info['libPaths'] = libpaths
-        if !(isdirectory(expand(libpaths[0])) && filewritable(expand(libpaths[0])) == 2) && !exists("g:R_remote_tmpdir")
-            if !isdirectory(expand(libpaths[1]))
+        if !(isdirectory(libpaths[0]) && filewritable(libpaths[0]) == 2) && !exists("g:R_remote_tmpdir")
+            if !isdirectory(libpaths[1])
                 let resp = input('"' . libpaths[0] . '" is not writable. Should "' . libpaths[1] . '" be created now? [y/n] ')
                 if resp[0] ==? "y"
-                    call mkdir(expand(libpaths[1]), "p")
+                    call mkdir(libpaths[1], "p")
                 endif
                 echo " "
             endif
@@ -579,11 +639,9 @@ function CheckNvimcomVersion()
             return 0
         else
             if has("win32")
-                call SetRtoolsPath()
                 let g:rplugin.debug_info['CMD_INSTALL'] = system(g:rplugin.Rcmd . " CMD INSTALL --no-multiarch nvimcom_" . s:required_nvimcom . ".tar.gz")
-                call UnSetRtoolsPath()
             else
-                let g:rplugin.debug_info['CMD_INSTALL'] = system(g:rplugin.Rcmd . " CMD INSTALL nvimcom_" . s:required_nvimcom . ".tar.gz")
+                let g:rplugin.debug_info['CMD_INSTALL'] = system(g:rplugin.Rcmd . " CMD INSTALL --no-lock nvimcom_" . s:required_nvimcom . ".tar.gz")
             endif
             if v:shell_error
                 if filereadable(expand("~/.R/Makevars"))
@@ -591,12 +649,10 @@ function CheckNvimcomVersion()
                 else
                     call ShowRSysLog(g:rplugin.debug_info['CMD_INSTALL'], "Error_installing_nvimcom", "Failed to install nvimcom")
                 endif
-                if has("win32")
-                    call CheckRtools()
-                endif
                 call delete("nvimcom_" . s:required_nvimcom . ".tar.gz")
                 return 0
             else
+                call RSetDefaultPkg()
                 echon "Building lists for omni completion... "
                 let rdp = $R_DEFAULT_PACKAGES
                 if rdp !~ "\<base\>"
@@ -622,18 +678,34 @@ function CheckNvimcomVersion()
         endif
         call delete("nvimcom_" . s:required_nvimcom . ".tar.gz")
         silent cd -
+    else
+        call RSetDefaultPkg()
     endif
     return 1
 endfunction
 
+function NclientserverInfo(info)
+    echo a:info
+endfunction
+
+function RequestNCSInfo()
+    call JobStdin(g:rplugin.jobs["ClientServer"], "4\n")
+endfunction
+
+command RGetNCSInfo :call RequestNCSInfo()
+
 function StartNClientServer(w)
     if IsJobRunning("ClientServer")
-        call FinishStartingR()
+        if a:w == "StartR"
+            call FinishStartingR()
+        endif
         return
     endif
     if !filereadable(g:rplugin.compldir . '/path_to_nvimcom')
         return
     endif
+
+    let s:starting_ncs = 1
 
     let g:rplugin.debug_info['Start_nclientserver'] = a:w
 
@@ -646,6 +718,7 @@ function StartNClientServer(w)
     endif
 
     let nvimcomdir = readfile(g:rplugin.compldir . '/path_to_nvimcom')
+    call map(nvimcomdir, 'substitute(expand(v:val), "\\", "/", "g")')
 
     if g:rplugin.nvimcom_bin_dir == ""
         if exists("g:R_nvimcom_home") && filereadable(g:R_nvimcom_home . '/bin/' . nvc)
@@ -688,14 +761,62 @@ function StartNClientServer(w)
             let $NVIMR_SECRET = randlst[1]
         endif
     endif
+    if g:R_objbr_opendf
+        let $NVIMR_OPENDF = "TRUE"
+    endif
+    if g:R_objbr_openlist
+        let $NVIMR_OPENLS = "TRUE"
+    endif
     let g:rplugin.jobs["ClientServer"] = StartJob([nvc], g:rplugin.job_handlers)
+    "let g:rplugin.jobs["ClientServer"] = StartJob(['valgrind', '--log-file=/tmp/nclientserver_valgrind_log', '--leak-check=full', nvc], g:rplugin.job_handlers)
+    unlet $NVIMR_OPENDF
+    unlet $NVIMR_OPENLS
+endfunction
+
+function UpdatePathForR()
+    if exists("g:R_path")
+        " Add R directory to the $PATH
+        let g:rplugin.R_path = expand(g:R_path)
+        if !isdirectory(g:rplugin.R_path)
+            call RWarningMsg('"' . g:R_path . '" is not a directory. Fix the value of R_path in your vimrc.')
+            return 0
+        endif
+        if $PATH !~ '^' . g:rplugin.R_path
+            if has("win32")
+                let $PATH = g:rplugin.R_path . ';' . substitute($PATH, ';' . g:rplugin.R_path . ';', ';', '')
+            else
+                let $PATH = g:rplugin.R_path . ':' . substitute($PATH, ':' . g:rplugin.R_path . ':', ':', '')
+            endif
+        endif
+        if !executable(g:rplugin.R)
+            call RWarningMsg('"' . g:rplugin.R . '" not found. Fix the value of either R_path or R_app in your vimrc.')
+            return 0
+        endif
+    endif
+    return 1
 endfunction
 
 " Start R
 function StartR(whatr)
     let s:wait_nvimcom = 1
 
-    if !g:R_in_buffer
+    if exists('s:starting_ncs') && s:starting_ncs == 1
+        " The user called StartR too quickly
+        echon "Waiting nclientserver..."
+        let ii = 0
+        while s:starting_ncs == 1
+            sleep 100m
+            let ii += 1
+            if ii == 30
+                break
+            endif
+        endwhile
+        unlet s:starting_ncs
+    endif
+
+    call UpdatePathForR()
+
+    if (type(g:R_external_term) == v:t_number && g:R_external_term == 1) || type(g:R_external_term) == v:t_string
         let g:R_objbr_place = substitute(g:R_objbr_place, 'console', 'script', '')
     endif
 
@@ -708,17 +829,8 @@ function StartR(whatr)
         exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/R/functions.vim"
     endif
 
-    if $R_DEFAULT_PACKAGES == ""
-        let $R_DEFAULT_PACKAGES = "datasets,utils,grDevices,graphics,stats,methods,nvimcom"
-    elseif $R_DEFAULT_PACKAGES !~ "nvimcom"
-        let $R_DEFAULT_PACKAGES .= ",nvimcom"
-    endif
-    if exists("g:RStudio_cmd") && $R_DEFAULT_PACKAGES !~ "rstudioapi"
-        let $R_DEFAULT_PACKAGES .= ",rstudioapi"
-    endif
-
     let s:has_warning = 0
-    if !CheckNvimcomVersion()
+    if !CheckNvimcomVersion(1)
         return
     endif
 
@@ -744,7 +856,7 @@ function FinishStartingR()
     call writefile([], g:rplugin.tmpdir . "/GlobalEnvList_" . $NVIMR_ID)
     call writefile([], g:rplugin.tmpdir . "/globenv_" . $NVIMR_ID)
     call writefile([], g:rplugin.tmpdir . "/liblist_" . $NVIMR_ID)
-    call delete(g:rplugin.tmpdir . "/libnames_" . $NVIMR_ID)
+    call writefile([], g:rplugin.tmpdir . "/libnames_" . $NVIMR_ID)
 
     call AddForDeletion(g:rplugin.tmpdir . "/GlobalEnvList_" . $NVIMR_ID)
     call AddForDeletion(g:rplugin.tmpdir . "/globenv_" . $NVIMR_ID)
@@ -752,20 +864,12 @@ function FinishStartingR()
     call AddForDeletion(g:rplugin.tmpdir . "/libnames_" . $NVIMR_ID)
     call AddForDeletion(g:rplugin.tmpdir . "/nvimbol_finished")
     call AddForDeletion(g:rplugin.tmpdir . "/start_options.R")
+    call AddForDeletion(g:rplugin.tmpdir . "/args_for_completion")
     if has("win32")
         call AddForDeletion(g:rplugin.tmpdir . "/run_cmd.bat")
     endif
 
-    if g:R_objbr_opendf
-        let start_options = ['options(nvimcom.opendf = TRUE)']
-    else
-        let start_options = ['options(nvimcom.opendf = FALSE)']
-    endif
-    if g:R_objbr_openlist
-        let start_options += ['options(nvimcom.openlist = TRUE)']
-    else
-        let start_options += ['options(nvimcom.openlist = FALSE)']
-    endif
+    let start_options = []
     if g:R_objbr_allnames
         let start_options += ['options(nvimcom.allnames = TRUE)']
     else
@@ -775,16 +879,6 @@ function FinishStartingR()
         let start_options += ['options(nvimcom.texerrs = TRUE)']
     else
         let start_options += ['options(nvimcom.texerrs = FALSE)']
-    endif
-    if g:R_objbr_labelerr
-        let start_options += ['options(nvimcom.labelerr = TRUE)']
-    else
-        let start_options += ['options(nvimcom.labelerr = FALSE)']
-    endif
-    if g:R_hi_fun_globenv
-        let start_options += ['options(nvimcom.higlobfun = TRUE)']
-    else
-        let start_options += ['options(nvimcom.higlobfun = FALSE)']
     endif
     if exists('g:R_setwidth') && g:R_setwidth == 2
         let start_options += ['options(nvimcom.setwidth = TRUE)']
@@ -796,7 +890,7 @@ function FinishStartingR()
     else
         let start_options += ['options(nvimcom.nvimpager = TRUE)']
     endif
-    if g:R_in_buffer && g:R_esc_term
+    if type(g:R_external_term) == v:t_number && g:R_external_term == 0 && g:R_esc_term
         let start_options += ['options(editor = nvimcom:::nvim.edit)']
     endif
     if exists("g:R_csv_delim") && (g:R_csv_delim == "," || g:R_csv_delim == ";")
@@ -804,8 +898,7 @@ function FinishStartingR()
     else
         let start_options += ['options(nvimcom.delim = "\t")']
     endif
-    let start_options += ['options(nvimcom.lsenvtol = ' . g:R_ls_env_tol . ')',
-                \ 'options(nvimcom.source.path = "' . s:Rsource_read . '")']
+    let start_options += ['options(nvimcom.source.path = "' . s:Rsource_read . '")']
 
     let rwd = ""
     if g:R_nvim_wd == 0
@@ -845,7 +938,7 @@ function FinishStartingR()
         return
     endif
 
-    if g:R_in_buffer
+    if type(g:R_external_term) == v:t_number && g:R_external_term == 0
         call StartR_InBuffer()
         return
     endif
@@ -875,16 +968,16 @@ function FinishStartingR()
 endfunction
 
 " Send SIGINT to R
-function StopR()
+function SignalToR(signal)
     if s:R_pid
-        call system("kill -s SIGINT " . s:R_pid)
+        call system('kill -s ' . a:signal . ' ' . s:R_pid)
     endif
 endfunction
 
 function SetSendCmdToR(...)
     if exists("g:RStudio_cmd")
         let g:SendCmdToR = function('SendCmdToRStudio')
-    elseif g:R_in_buffer
+    elseif type(g:R_external_term) == v:t_number && g:R_external_term == 0
         let g:SendCmdToR = function('SendCmdToR_Buffer')
     elseif has("win32")
         let g:SendCmdToR = function('SendCmdToR_Windows')
@@ -948,8 +1041,10 @@ function SetNvimcomInfo(nvimcomversion, nvimcomhome, bindportn, rpid, wid, r_inf
     endif
     let g:Rout_prompt_str = substitute(Rinfo[2], ' $', '', '')
     let g:Rout_continue_str = substitute(Rinfo[3], ' $', '', '')
+    let g:Rout_prompt_str = substitute(g:Rout_prompt_str, '.*#N#', '', '')
+    let g:Rout_continue_str = substitute(g:Rout_continue_str, '.*#N#', '', '')
 
-    if has('nvim') && g:R_in_buffer
+    if has('nvim') && type(g:R_external_term) == v:t_number && g:R_external_term == 0
         " Put the cursor and the end of the buffer to ensure automatic scrolling
         " See: https://github.com/neovim/neovim/issues/2636
         let isnormal = mode() ==# 'n'
@@ -992,9 +1087,9 @@ function SetNvimcomInfo(nvimcomversion, nvimcomhome, bindportn, rpid, wid, r_inf
         endif
         " Set nvimcom port in nvimclient
         if has("win32")
-            call JobStdin(g:rplugin.jobs["ClientServer"], "\001" . g:rplugin.nvimcom_port . " " . $RCONSOLE . "\n")
+            call JobStdin(g:rplugin.jobs["ClientServer"], "1" . g:rplugin.nvimcom_port . " " . $RCONSOLE . "\n")
         else
-            call JobStdin(g:rplugin.jobs["ClientServer"], "\001" . g:rplugin.nvimcom_port . "\n")
+            call JobStdin(g:rplugin.jobs["ClientServer"], "1" . g:rplugin.nvimcom_port . "\n")
         endif
     else
         call RWarningMsg("nvimcom is not running")
@@ -1004,12 +1099,12 @@ function SetNvimcomInfo(nvimcomversion, nvimcomhome, bindportn, rpid, wid, r_inf
     if exists("g:RStudio_cmd")
         if has("win32") && g:R_arrange_windows && filereadable(g:rplugin.compldir . "/win_pos")
             " ArrangeWindows
-            call JobStdin(g:rplugin.jobs["ClientServer"], "\005" . g:rplugin.compldir . "\n")
+            call JobStdin(g:rplugin.jobs["ClientServer"], "75" . g:rplugin.compldir . "\n")
         endif
     elseif has("win32")
         if g:R_arrange_windows && filereadable(g:rplugin.compldir . "/win_pos")
             " ArrangeWindows
-            call JobStdin(g:rplugin.jobs["ClientServer"], "\005" . g:rplugin.compldir . "\n")
+            call JobStdin(g:rplugin.jobs["ClientServer"], "75" . g:rplugin.compldir . "\n")
         endif
     elseif g:R_applescript
         call foreground()
@@ -1019,8 +1114,21 @@ function SetNvimcomInfo(nvimcomversion, nvimcomhome, bindportn, rpid, wid, r_inf
         call delete(g:rplugin.tmpdir . "/openR")
     endif
 
-    if g:R_after_start != ''
-        call system(g:R_after_start)
+    if type(g:R_after_start) == 1
+        " Backward compatibility: R_after_start was a string until November, 2019.
+        if g:R_after_start != ''
+            call system(g:R_after_start)
+        endif
+    elseif type(g:R_after_start) == 3
+        for cmd in g:R_after_start
+            if cmd =~ '^!'
+                call system(substitute(cmd, '^!', '', ''))
+            elseif cmd =~ '^:'
+                exe substitute(cmd, '^:', '', '')
+            else
+                call RWarningMsg("R_after_start must be a list of strings starting with either '!' or ':'")
+            endif
+        endfor
     endif
     call timer_start(1000, "SetSendCmdToR")
 endfunction
@@ -1055,9 +1163,9 @@ function StartObjBrowser()
             elseif g:R_objbr_place =~# 'left'
                 sil exe 'leftabove vsplit ' . b:objbrtitle
             elseif g:R_objbr_place =~# 'above'
-                sil exe 'aboveleft vsplit ' . b:objbrtitle
+                sil exe 'aboveleft split ' . b:objbrtitle
             elseif g:R_objbr_place =~# 'below'
-                sil exe 'belowright vsplit ' . b:objbrtitle
+                sil exe 'belowright split ' . b:objbrtitle
             else
                 call RWarningMsg('Invalid value for R_objbr_place: "' . R_objbr_place . '"')
                 exe "set switchbuf=" . savesb
@@ -1070,11 +1178,15 @@ function StartObjBrowser()
             sil exe 'resize ' . g:R_objbr_h
         endif
         sil set filetype=rbrowser
+        let g:rplugin.curview = "GlobalEnv"
+        let g:rplugin.ob_winnr = win_getid()
+        if exists("*nvim_win_get_buf")
+            let g:rplugin.ob_buf = nvim_win_get_buf(g:rplugin.ob_winnr)
+        endif
 
         " Inheritance of some local variables
         let b:objbrtitle = g:tmp_objbrtitle
         unlet g:tmp_objbrtitle
-        call SendToNvimcom("\002" . g:rplugin.myport)
     endif
     exe "set switchbuf=" . savesb
 endfunction
@@ -1094,13 +1206,25 @@ function RObjBrowser()
 
     let s:running_objbr = 1
 
+    call UpdateRGlobalEnv(1)
+    call JobStdin(g:rplugin.jobs["ClientServer"], "31\n")
+    call SendToNvimcom("\002" . $NVIMR_ID)
+
     call StartObjBrowser()
     let s:running_objbr = 0
+
+    if len(g:R_after_ob_open) > 0
+        redraw
+        for cmd in g:R_after_ob_open
+            exe substitute(cmd, '^:', '', '')
+        endfor
+    endif
+
     return
 endfunction
 
 function RBrOpenCloseLs(stt)
-    call SendToNvimcom("\007" . a:stt)
+    call JobStdin(g:rplugin.jobs["ClientServer"], "34" . a:stt . g:rplugin.curview . "\n")
 endfunction
 
 let s:wait_nvimcom = 0
@@ -1118,15 +1242,153 @@ function SendToNvimcom(cmd)
         call RWarningMsg("ClientServer not running.")
         return
     endif
-    call JobStdin(g:rplugin.jobs["ClientServer"], "\002" . a:cmd . "\n")
+    call JobStdin(g:rplugin.jobs["ClientServer"], "2" . a:cmd . "\n")
 endfunction
 
 " This function is called by nclientserver
 function RSetMyPort(p)
     let g:rplugin.myport = a:p
     let $NVIMR_PORT = a:p
+    let s:starting_ncs = 0
     if exists("s:what_r")
         call FinishStartingR()
+    endif
+endfunction
+
+" No support for break points
+"if synIDattr(synIDtrans(hlID("SignColumn")), "bg") =~ '^#'
+"    exe 'hi def StopSign guifg=red guibg=' . synIDattr(synIDtrans(hlID("SignColumn")), "bg")
+"else
+"    exe 'hi def StopSign ctermfg=red ctermbg=' . synIDattr(synIDtrans(hlID("SignColumn")), "bg")
+"endif
+"call sign_define('stpline', {'text': '●', 'texthl': 'StopSign', 'linehl': 'None', 'numhl': 'None'})
+
+" Functions sign_define(), sign_place() and sign_unplace() require Neovim >= 0.4.3
+"call sign_define('dbgline', {'text': '▬▶', 'texthl': 'SignColumn', 'linehl': 'QuickFixLine', 'numhl': 'Normal'})
+
+if &ambiwidth == "double" || (has("win32") && !has("nvim"))
+    sign define dbgline text==> texthl=SignColumn linehl=QuickFixLine
+else
+    sign define dbgline text=▬▶ texthl=SignColumn linehl=QuickFixLine
+endif
+
+let s:func_offset = -2
+function StopRDebugging()
+    if !g:R_debug
+        return
+    endif
+    "call sign_unplace('rdebugcurline')
+    "sign unplace rdebugcurline
+    sign unplace 1
+    let s:func_offset = -2 " Did not seek yet
+endfunction
+
+function FindDebugFunc(srcref)
+    if type(g:R_external_term) == v:t_number && g:R_external_term == 0
+        let s:func_offset = -1 " Not found
+        let sbopt = &switchbuf
+        set switchbuf=useopen,usetab
+        let curtab = tabpagenr()
+        let isnormal = mode() ==# 'n'
+        let curwin = winnr()
+        exe 'sb ' . g:rplugin.R_bufname
+        sleep 30m " Time to fill the buffer lines
+        let rlines = getline(1, "$")
+        exe 'sb ' . g:rplugin.rscript_name
+    elseif string(g:SendCmdToR) == "function('SendCmdToR_Term')"
+        let tout = system('tmux -L NvimR capture-pane -p -t ' . g:rplugin.tmuxsname)
+        let rlines = split(tout, "\n")
+    elseif string(g:SendCmdToR) == "function('SendCmdToR_TmuxSplit')"
+        let tout = system('tmux capture-pane -p -t ' . g:rplugin.rconsole_pane)
+        let rlines = split(tout, "\n")
+    else
+        let rlines = []
+    endif
+
+    let idx = len(rlines) - 1
+    while idx > 0
+        if rlines[idx] =~# '^debugging in: '
+            let funcnm = substitute(rlines[idx], '^debugging in: \(.\{-}\)(.*', '\1', '')
+            let s:func_offset = search('.*\<' . funcnm . '\s*<-\s*function\s*(', 'b')
+            if s:func_offset > 0
+                let s:func_offset -= 1
+            endif
+            if a:srcref == '<text>'
+                if &filetype == 'rmd'
+                    let s:func_offset = search('^\s*```\s*{\s*r', 'nb')
+                elseif &filetype == 'rnoweb'
+                    let s:func_offset = search('^<<', 'nb')
+                endif
+            endif
+            break
+        endif
+        let idx -= 1
+    endwhile
+
+    if type(g:R_external_term) == v:t_number && g:R_external_term == 0
+        if tabpagenr() != curtab
+            exe 'normal! ' . curtab . 'gt'
+        endif
+        exe curwin . 'wincmd w'
+        if isnormal
+            stopinsert
+        endif
+        exe 'set switchbuf=' . sbopt
+    endif
+endfunction
+
+function RDebugJump(fnm, lnum)
+    if !g:R_debug
+        return
+    endif
+    if a:fnm == '' || a:fnm == '<text>'
+        " Functions sent directly to R Console have no associated source file
+        " and functions sourced by knitr have '<text>' as source reference.
+        if s:func_offset == -2
+            call FindDebugFunc(a:fnm)
+        endif
+        if s:func_offset <= 0
+            return
+        endif
+    endif
+
+    if s:func_offset > 0
+        let flnum = a:lnum + s:func_offset
+        let fname = g:rplugin.rscript_name
+    else
+        let flnum = a:lnum
+        let fname = expand(a:fnm)
+    endif
+
+
+    if fname != g:rplugin.rscript_name && fname != expand("%") && fname != expand("%:p")
+        if filereadable(fname)
+            exe 'sb ' . g:rplugin.rscript_name
+            if &modified
+                split
+            endif
+            exe 'edit ' . fname
+        elseif glob("*") =~ fname
+            exe 'sb ' . g:rplugin.rscript_name
+            if &modified
+                split
+            endif
+            exe 'edit ' . fname
+        else
+            return
+        endif
+    endif
+
+    exe ':' . flnum
+    "normal! zz
+
+    "call sign_unplace('rdebugcurline')
+    "call sign_place(1, 'rdebugcurline', 'dbgline', fname, {'lnum': flnum})
+    sign unplace 1
+    exe 'sign place 1 line=' . flnum . ' name=dbgline file=' . fname
+    if type(g:R_external_term) == v:t_number && g:R_external_term == 0
+        exe 'sb ' . g:rplugin.R_bufname
+        startinsert
     endif
 endfunction
 
@@ -1182,12 +1444,17 @@ function SendLineToRAndInsertOutput()
     call RInsert("print(" . cleanl . ")", "comment")
 endfunction
 
-function FinishRInsert(type)
-    if a:type == "newtab"
-        tabnew
-        set ft=rout
-    endif
+function ShowRObj(howto, bname, ftype)
+    let bfnm = substitute(a:bname, '[ [:punct:]]', '_', 'g')
+    call AddForDeletion(g:rplugin.tmpdir . "/" . bfnm)
+    silent exe a:howto . ' ' . substitute(g:rplugin.tmpdir, ' ', '\\ ', 'g') . '/' . bfnm
+    silent exe 'set ft=' . a:ftype
+    let objf = readfile(g:rplugin.tmpdir . "/Rinsert")
+    call setline(1, objf)
+    set nomodified
+endfunction
 
+function FinishRInsert(type)
     silent exe "read " . substitute(g:rplugin.tmpdir, ' ', '\\ ', 'g') . "/Rinsert"
 
     if a:type == "comment"
@@ -1256,45 +1523,53 @@ function GetROutput(outf)
     redraw
 endfunction
 
-function RViewDF(oname)
+function RViewDF(oname, ...)
+    let tsvnm = g:rplugin.tmpdir . '/' . a:oname . '.tsv'
+    call AddForDeletion(tsvnm)
+
     if exists('g:R_csv_app')
         if g:R_csv_app =~# '^terminal:'
             let csv_app = split(g:R_csv_app, ':')[1]
             if executable(csv_app)
-                call system('cp "' . g:rplugin.tmpdir . '/Rinsert" "' . a:oname . '.csv"')
+                call system('cp "' . g:rplugin.tmpdir . '/Rinsert" "' . a:oname . '.tsv"')
                 tabnew
-                exe 'terminal ' . csv_app . ' ' . a:oname . '.csv'
+                exe 'terminal ' . csv_app . ' ' . a:oname . '.tsv'
                 startinsert
             else
                 call RWarningMsg('R_csv_app ("' . csv_app . '") is not executable')
             endif
             return
-        endif
-
-        if !executable(g:R_csv_app) && !executable(split(g:R_csv_app)[0])
+        elseif g:R_csv_app =~# '^tmux new-window '
+            let csv_app = substitute(g:R_csv_app, '^tmux new-window *', '', '')
+            if !executable(csv_app)
+                call RWarningMsg('R_csv_app ("' . csv_app . '") is not executable')
+                return
+            endif
+        elseif !executable(g:R_csv_app) && !executable(split(g:R_csv_app)[0])
             call RWarningMsg('R_csv_app ("' . g:R_csv_app . '") is not executable')
             return
         endif
+
         normal! :<Esc>
-        call system('cp "' . g:rplugin.tmpdir . '/Rinsert" "' . a:oname . '.csv"')
-        if has("win32")
-            silent exe '!start "' . g:R_csv_app . '" "' . a:oname . '.csv"'
+        call system('cp "' . g:rplugin.tmpdir . '/Rinsert" "' . tsvnm . '"')
+        if has("nvim")
+            call jobstart([g:R_csv_app, tsvnm], {'detach': v:true})
+        elseif has("win32")
+            silent exe '!start "' . g:R_csv_app . '" "' . tsvnm . '"'
         else
-            call system(g:R_csv_app . ' "' . a:oname . '.csv" >/dev/null 2>/dev/null &')
+            call system(g:R_csv_app . ' "' . tsvnm . '" >/dev/null 2>/dev/null &')
         endif
         return
     endif
-    echo 'Opening "' . a:oname . '.csv"'
-    silent exe 'tabnew ' . a:oname . '.csv'
+
+    let location = get(a:, 1, "tabnew")
+    silent exe location . ' ' . substitute(tsvnm, ' ', '\\ ', 'g')
     silent 1,$d
     silent exe 'read ' . substitute(g:rplugin.tmpdir, ' ', '\\ ', 'g') . '/Rinsert'
     silent 1d
     set filetype=csv
     set nomodified
     redraw
-    if !exists(":CSVTable") && g:R_csv_warn
-        call RWarningMsg("csv.vim is not installed (http://www.vim.org/scripts/script.php?script_id=2830)")
-    endif
 endfunction
 
 function GetSourceArgs(e)
@@ -1354,6 +1629,18 @@ function RSourceLines(...)
 
     let ok = g:SendCmdToR(rcmd)
     return ok
+endfunction
+
+" Send motion to R
+function SendMotionToR(type)
+    let lstart = line("'[")
+    let lend = line("']")
+    if lstart == lend
+        call SendLineToR("stay", lstart)
+    else
+        let lines = getline(lstart, lend)
+        call RSourceLines(lines, "", "block")
+    endif
 endfunction
 
 " Send file to R
@@ -1490,6 +1777,12 @@ function SendFunctionToR(e, m)
     endif
 endfunction
 
+" Send all lines above to R
+function SendAboveLinesToR()
+    let lines = getline(1, line(".") - 1)
+    call RSourceLines(lines, "")
+endfunction
+
 " Send selection to R
 function SendSelectionToR(...)
     let ispy = 0
@@ -1572,7 +1865,9 @@ function SendSelectionToR(...)
     if a:2 == "down"
         call GoDown()
     else
-        normal! gv
+        if a:0 < 3 || (a:0 == 3 && a:3 != "normal")
+            normal! gv
+        endif
     endif
 endfunction
 
@@ -1647,7 +1942,7 @@ function SendFHChunkToR()
     let curbuf = getline(1, "$")
     let idx = 0
     while idx < here
-        if curbuf[idx] =~ begchk
+        if curbuf[idx] =~ begchk && curbuf[idx] !~ '\<eval\s*=\s*F'
             " Child R chunk
             if curbuf[idx] =~ chdchk
                 " First run everything up to child chunk and reset buffer
@@ -1699,8 +1994,9 @@ function RParenDiff(str)
 endfunction
 
 " Send current line to R.
-function SendLineToR(godown)
-    let line = getline(".")
+function SendLineToR(godown, ...)
+    let lnum = get(a:, 1, ".")
+    let line = getline(lnum)
     if strlen(line) == 0
         if a:godown =~ "down"
             call GoDown()
@@ -1794,6 +2090,7 @@ function SendLineToR(godown)
             let chunkend = ".. .."
         endif
         let rpd = RParenDiff(line)
+        let has_op = line =~ '%>%\s*$'
         if rpd < 0
             let line1 = line(".")
             let cline = line1 + 1
@@ -1803,16 +2100,16 @@ function SendLineToR(godown)
                     break
                 endif
                 let rpd += RParenDiff(txt)
-                let cline += 1
                 if rpd == 0
-                    for lnum in range(line1, cline - 1)
+                    let has_op = getline(cline) =~ '%>%\s*$'
+                    for lnum in range(line1, cline)
                         if g:R_bracketed_paste
-                            if lnum == line1 && lnum == cline - 1
-                                let ok = g:SendCmdToR("\x1b[200~" . getline(lnum) . "\n\x1b[201~", 0)
+                            if lnum == line1 && lnum == cline
+                                let ok = g:SendCmdToR("\x1b[200~" . getline(lnum) . "\x1b[201~\n", 0)
                             elseif lnum == line1
                                 let ok = g:SendCmdToR("\x1b[200~" . getline(lnum))
-                            elseif lnum == cline - 1
-                                let ok = g:SendCmdToR(getline(lnum) . "\n\x1b[201~", 0)
+                            elseif lnum == cline
+                                let ok = g:SendCmdToR(getline(lnum) . "\x1b[201~\n", 0)
                             else
                                 let ok = g:SendCmdToR(getline(lnum))
                             endif
@@ -1822,22 +2119,23 @@ function SendLineToR(godown)
                         if !ok
                             " always close bracketed mode upon failure
                             if g:R_bracketed_paste
-                                call g:SendCmdToR("\x1b[201~", 0)
+                                call g:SendCmdToR("\x1b[201~\n", 0)
                             end
                             return
                         endif
                     endfor
-                    call cursor(cline - 1, 1)
+                    call cursor(cline, 1)
                     let block = 1
                     break
                 endif
+                let cline += 1
             endwhile
         endif
     endif
 
     if !block
         if g:R_bracketed_paste
-            let ok = g:SendCmdToR("\x1b[200~" . line . "\n\x1b[201~", 0)
+            let ok = g:SendCmdToR("\x1b[200~" . line . "\x1b[201~\n", 0)
         else
             let ok = g:SendCmdToR(line)
         end
@@ -1846,6 +2144,9 @@ function SendLineToR(godown)
     if ok
         if a:godown =~ "down"
             call GoDown()
+            if has_op
+                call SendLineToR(a:godown)
+            endif
         else
             if a:godown == "newline"
                 normal! o
@@ -1870,10 +2171,13 @@ endfunction
 
 " Clear the console screen
 function RClearConsole()
-    if has("win32") && !g:R_in_buffer
-        call JobStdin(g:rplugin.jobs["ClientServer"], "\006\n")
+    if g:R_clear_console == 0
+        return
+    endif
+    if has("win32") && type(g:R_external_term) == v:t_number && g:R_external_term == 1
+        call JobStdin(g:rplugin.jobs["ClientServer"], "76\n")
         sleep 50m
-        call JobStdin(g:rplugin.jobs["ClientServer"], "\007\n")
+        call JobStdin(g:rplugin.jobs["ClientServer"], "77\n")
     else
         call g:SendCmdToR("\014", 0)
     endif
@@ -1905,6 +2209,9 @@ function ClearRInfo()
     call delete(g:rplugin.tmpdir . "/liblist_" . $NVIMR_ID)
     call delete(g:rplugin.tmpdir . "/libnames_" . $NVIMR_ID)
     call delete(g:rplugin.tmpdir . "/GlobalEnvList_" . $NVIMR_ID)
+    for fn in s:del_list
+        call delete(fn)
+    endfor
     let g:SendCmdToR = function('SendCmdToR_fake')
     let s:R_pid = 0
     let g:rplugin.nvimcom_port = 0
@@ -1915,10 +2222,10 @@ function ClearRInfo()
         call system("tmux set automatic-rename on")
     endif
 
-    if bufloaded(b:objbrtitle)
-        exe "bunload! " . b:objbrtitle
-        sleep 30m
+    if type(g:R_external_term) == v:t_number && g:R_external_term == 0 && has("nvim")
+        call CloseRTerm()
     endif
+
 endfunction
 
 " Quit R
@@ -1933,16 +2240,9 @@ function RQuit(how)
         endif
     endif
 
-    if g:R_save_win_pos
+    if has("win32") && type(g:R_external_term) == v:t_number && g:R_external_term == 1
         " SaveWinPos
-        call JobStdin(g:rplugin.jobs["ClientServer"], "\004" . $NVIMR_COMPLDIR . "\n")
-    endif
-
-    " In Neovim, the cursor must be in the term buffer to get TermClose event
-    " triggered
-    if g:R_in_buffer && exists("g:rplugin.R_bufname") && has("nvim")
-        exe "sbuffer " . g:rplugin.R_bufname
-        startinsert
+        call JobStdin(g:rplugin.jobs["ClientServer"], "74" . $NVIMR_COMPLDIR . "\n")
     endif
 
     if bufloaded(b:objbrtitle)
@@ -1972,7 +2272,7 @@ endfunction
 
 function SetRTextWidth(rkeyword)
     if g:R_nvimpager == "tabnew"
-        let s:rdoctitle = a:rkeyword . "\\ (help)"
+        let s:rdoctitle = a:rkeyword
     else
         let s:tnr = tabpagenr()
         if g:R_nvimpager != "tab" && s:tnr > 1
@@ -2254,7 +2554,7 @@ function ShowRDoc(rkeyword)
             " The only way of ShowRDoc() being called when R_nvimpager=="no"
             " is the user setting the value of R_nvimpager to 'no' after
             " Neovim startup. It should be set in the vimrc.
-            if g:R_in_buffer
+            if type(g:R_external_term) == v:t_number && g:R_external_term == 0
                 let g:R_nvimpager = "vertical"
             else
                 let g:R_nvimpager = "tab"
@@ -2293,8 +2593,21 @@ function ShowRDoc(rkeyword)
         exe 'nnoremap <buffer><silent> <CR> :call AskRDoc("' . rkeyw . '", expand("<cword>"), 0)<CR>'
         redraw
         call cursor(5, 4)
-    else
+    elseif a:rkeyword =~ '(help)' || search("\x08", "nw") > 0
         set filetype=rdoc
+        call cursor(1, 1)
+    elseif a:rkeyword =~? '\.Rd$'
+        " Called by devtools::load_all().
+        " See https://github.com/jalvesaq/Nvim-R/issues/482
+        set filetype=rhelp
+        call cursor(1, 1)
+    else
+        set filetype=rout
+        setlocal bufhidden=wipe
+        setlocal nonumber
+        setlocal noswapfile
+        set buftype=nofile
+        nnoremap <buffer><silent> q :q<CR>
         call cursor(1, 1)
     endif
     let @@ = save_unnamed_reg
@@ -2304,7 +2617,7 @@ function ShowRDoc(rkeyword)
 endfunction
 
 " This function is called by nvimcom
-function ShowRObject(fname)
+function EditRObject(fname)
     let fcont = readfile(a:fname)
     exe "tabnew " . substitute($NVIMR_TMPDIR . "/edit_" . $NVIMR_ID, ' ', '\\ ', 'g')
     call setline(".", fcont)
@@ -2433,91 +2746,9 @@ function RAskHelp(...)
     endif
 endfunction
 
-function DisplayArgs()
-    if !exists("s:status_line")
-        let s:sttl_count = 0
-        let s:status_line = [&statusline, "", "", "", "", "", "", ""]
-    endif
-
-    let s:sttl_count += 1
-    if s:sttl_count > 7
-        let s:sttl_count = 7
-        return
-    endif
-
-    if &filetype == "r" || b:IsInRCode(0)
-        let rkeyword = RGetKeyword('@,48-57,_,.,$,@-@')
-        let fargs = "Not a function"
-        for omniL in g:rplugin_omni_lines
-            if omniL =~ '^' . rkeyword . "\x06"
-                let omniL = substitute(omniL, "\x08.*", "", "")
-                let tmp = split(omniL, "\x06")
-                if len(tmp) < 5
-                    break
-                else
-                    let fargs = tmp[4]
-                endif
-            endif
-        endfor
-        if fargs !~ "Not a function"
-            let fargs = substitute(fargs, "NO_ARGS", "", "g")
-            let fargs = substitute(fargs, "\x07", "=", "g")
-            let fargs = substitute(fargs, "\x09", ", ", "g")
-            let fargs = substitute(fargs, "%", "%%", "g")
-            let fargs = substitute(fargs, '\\', '\\\\', "g")
-            let sline = substitute(g:R_sttline_fmt, "%fun", rkeyword, "g")
-            let sline = substitute(sline, "%args", fargs, "g") . '%<'
-            if exists("g:R_set_sttline_cmd")
-                silent exe g:R_set_sttline_cmd
-            endif
-            let s:status_line[s:sttl_count] = sline
-            silent setlocal statusline=%!RArgsStatusLine()
-        endif
-    endif
-endfunction
 
 function RArgsStatusLine()
     return s:status_line[s:sttl_count]
-endfunction
-
-function RestoreStatusLine(backtozero)
-    if !exists("s:status_line")
-        let s:sttl_count = 0
-        let s:status_line = [&statusline, "", "", "", "", "", "", ""]
-    endif
-
-    let s:sttl_count -= 1
-    if s:sttl_count < 0
-        " The status line is already in its original state
-        let s:sttl_count = 0
-        return
-    endif
-
-    if a:backtozero
-        let s:sttl_count = 0
-    endif
-
-    if s:sttl_count == 0
-        if exists("g:R_restore_sttline_cmd")
-            exe g:R_restore_sttline_cmd
-        elseif exists("*airline#update_statusline")
-            call airline#update_statusline()
-        else
-            let &statusline = s:status_line[0]
-        endif
-    else
-        silent setlocal statusline=%!RArgsStatusLine()
-    endif
-endfunction
-
-function RSetStatusLine()
-    if !(&filetype == "r" || &filetype == "rnoweb" || &filetype == "rmd" || &filetype == "rrst" || &filetype == "rhelp")
-        return
-    elseif v:char == '('
-        call DisplayArgs()
-    elseif v:char == ')'
-        call RestoreStatusLine(0)
-    endif
 endfunction
 
 function PrintRObject(rkeyword)
@@ -2623,35 +2854,7 @@ function RAction(rcmd, ...)
             call g:SendCmdToR(raction)
             return
         endif
-        if a:rcmd == "viewdf"
-            if exists("g:R_df_viewer")
-                call g:SendCmdToR(printf(g:R_df_viewer, rkeyword))
-            else
-                echo "Wait..."
-                call delete(g:rplugin.tmpdir . "/Rinsert")
-                call AddForDeletion(g:rplugin.tmpdir . "/Rinsert")
-                if rkeyword =~ '::'
-                    call SendToNvimcom("\x08" . $NVIMR_ID . 'nvimcom:::nvim_viewdf(' . rkeyword . ')')
-                else
-                    if has("win32") && &encoding == "utf-8"
-                        call SendToNvimcom("\x08" . $NVIMR_ID . 'nvimcom:::nvim_viewdf("' . rkeyword . '", fenc="UTF-8")')
-                    else
-                        call SendToNvimcom("\x08" . $NVIMR_ID . 'nvimcom:::nvim_viewdf("' . rkeyword . '")')
-                    endif
-                endif
-            endif
-            return
-        endif
-        if a:rcmd == "dputtab" || a:rcmd == "printtab"
-            if bufexists(rkeyword . ".R")
-                tabnew
-            else
-                exe "tabnew " . rkeyword . ".R"
-            endif
-            exe "Rinsert " . substitute(a:rcmd, "tab", "", "") . "(" . rkeyword . ")"
-            set nomodified
-            return
-        endif
+
         if g:R_open_example && a:rcmd == "example"
             call SendToNvimcom("\x08" . $NVIMR_ID . 'nvimcom:::nvim.example("' . rkeyword . '")')
             return
@@ -2664,6 +2867,35 @@ function RAction(rcmd, ...)
         else
             let argmnts = ''
         endif
+
+        if a:rcmd == "viewobj" || a:rcmd == "dputtab"
+            call delete(g:rplugin.tmpdir . "/Rinsert")
+            call AddForDeletion(g:rplugin.tmpdir . "/Rinsert")
+
+            if a:rcmd == "viewobj"
+                if exists("g:R_df_viewer")
+                    let argmnts .= ', R_df_viewer = "' . g:R_df_viewer . '"'
+                endif
+                if rkeyword =~ '::'
+                    call SendToNvimcom("\x08" . $NVIMR_ID .
+                                \'nvimcom:::nvim_viewobj(' . rkeyword . argmnts . ')')
+                else
+                    if has("win32") && &encoding == "utf-8"
+                        call SendToNvimcom("\x08" . $NVIMR_ID .
+                                    \'nvimcom:::nvim_viewobj("' . rkeyword . '"' . argmnts .
+                                    \', fenc="UTF-8"' . ')')
+                    else
+                        call SendToNvimcom("\x08" . $NVIMR_ID .
+                                    \'nvimcom:::nvim_viewobj("' . rkeyword . '"' . argmnts . ')')
+                    endif
+                endif
+            else
+                call SendToNvimcom("\x08" . $NVIMR_ID .
+                            \'nvimcom:::nvim_dput("' . rkeyword . '"' . argmnts . ')')
+            endif
+            return
+        endif
+
         let raction = rfun . '(' . rkeyword . argmnts . ')'
         call g:SendCmdToR(raction)
     endif
@@ -2690,122 +2922,6 @@ function! RMakeRmd(t)
     call g:SendCmdToR(rcmd)
 endfunction
 
-let s:ikblist = execute("imap")
-let s:nkblist = execute("nmap")
-let s:vkblist = execute("vmap")
-let s:iskblist = split(s:ikblist, "\n")
-let s:nskblist = split(s:nkblist, "\n")
-let s:vskblist = split(s:vkblist, "\n")
-let s:imaplist = []
-let s:vmaplist = []
-let s:nmaplist = []
-for i in s:iskblist
-    let si = split(i)
-    if len(si) == 3 && si[2] =~ "<Plug>R"
-        call add(s:imaplist, [si[1], si[2]])
-    endif
-endfor
-for i in s:nskblist
-    let si = split(i)
-    if len(si) == 3 && si[2] =~ "<Plug>R"
-        call add(s:nmaplist, [si[1], si[2]])
-    endif
-endfor
-for i in s:vskblist
-    let si = split(i)
-    if len(si) == 3 && si[2] =~ "<Plug>R"
-        call add(s:vmaplist, [si[1], si[2]])
-    endif
-endfor
-unlet s:ikblist
-unlet s:nkblist
-unlet s:vkblist
-unlet s:iskblist
-unlet s:nskblist
-unlet s:vskblist
-unlet i
-unlet si
-
-function RNMapCmd(plug)
-    for [el1, el2] in s:nmaplist
-        if el2 == a:plug
-            return el1
-        endif
-    endfor
-endfunction
-
-function RIMapCmd(plug)
-    for [el1, el2] in s:imaplist
-        if el2 == a:plug
-            return el1
-        endif
-    endfor
-endfunction
-
-function RVMapCmd(plug)
-    for [el1, el2] in s:vmaplist
-        if el2 == a:plug
-            return el1
-        endif
-    endfor
-endfunction
-
-function RControlMaps()
-    " List space, clear console, clear all
-    "-------------------------------------
-    call RCreateMaps("nvi", '<Plug>RListSpace',    'rl', ':call g:SendCmdToR("ls()")')
-    call RCreateMaps("nvi", '<Plug>RClearConsole', 'rr', ':call RClearConsole()')
-    call RCreateMaps("nvi", '<Plug>RClearAll',     'rm', ':call RClearAll()')
-
-    " Print, names, structure
-    "-------------------------------------
-    call RCreateMaps("ni", '<Plug>RObjectPr',     'rp', ':call RAction("print")')
-    call RCreateMaps("ni", '<Plug>RObjectNames',  'rn', ':call RAction("nvim.names")')
-    call RCreateMaps("ni", '<Plug>RObjectStr',    'rt', ':call RAction("str")')
-    call RCreateMaps("ni", '<Plug>RViewDF',       'rv', ':call RAction("viewdf")')
-    call RCreateMaps("ni", '<Plug>RDputObj',      'td', ':call RAction("dputtab")')
-    call RCreateMaps("ni", '<Plug>RPrintObj',     'tp', ':call RAction("printtab")')
-
-    call RCreateMaps("v", '<Plug>RObjectPr',     'rp', ':call RAction("print", "v")')
-    call RCreateMaps("v", '<Plug>RObjectNames',  'rn', ':call RAction("nvim.names", "v")')
-    call RCreateMaps("v", '<Plug>RObjectStr',    'rt', ':call RAction("str", "v")')
-    call RCreateMaps("v", '<Plug>RViewDF',       'rv', ':call RAction("viewdf", "v")')
-    call RCreateMaps("v", '<Plug>RDputObj',      'td', ':call RAction("dputtab", "v")')
-    call RCreateMaps("v", '<Plug>RPrintObj',     'tp', ':call RAction("printtab", "v")')
-
-    " Arguments, example, help
-    "-------------------------------------
-    call RCreateMaps("nvi", '<Plug>RShowArgs',     'ra', ':call RAction("args")')
-    call RCreateMaps("nvi", '<Plug>RShowEx',       're', ':call RAction("example")')
-    call RCreateMaps("nvi", '<Plug>RHelp',         'rh', ':call RAction("help")')
-
-    " Summary, plot, both
-    "-------------------------------------
-    call RCreateMaps("ni", '<Plug>RSummary',      'rs', ':call RAction("summary")')
-    call RCreateMaps("ni", '<Plug>RPlot',         'rg', ':call RAction("plot")')
-    call RCreateMaps("ni", '<Plug>RSPlot',        'rb', ':call RAction("plotsumm")')
-
-    call RCreateMaps("v", '<Plug>RSummary',      'rs', ':call RAction("summary", "v")')
-    call RCreateMaps("v", '<Plug>RPlot',         'rg', ':call RAction("plot", "v")')
-    call RCreateMaps("v", '<Plug>RSPlot',        'rb', ':call RAction("plotsumm", "v")')
-
-    " Build list of objects for omni completion
-    "-------------------------------------
-    call RCreateMaps("nvi", '<Plug>RUpdateObjBrowser', 'ro', ':call RObjBrowser()')
-    call RCreateMaps("nvi", '<Plug>ROpenLists',        'r=', ':call RBrOpenCloseLs(1)')
-    call RCreateMaps("nvi", '<Plug>RCloseLists',       'r-', ':call RBrOpenCloseLs(0)')
-
-    " Render script with rmarkdown
-    "-------------------------------------
-    call RCreateMaps("nvi", '<Plug>RMakeRmd',       'kr', ':call RMakeRmd("default")')
-    call RCreateMaps("nvi", '<Plug>RMakePDFK',      'kp', ':call RMakeRmd("pdf_document")')
-    call RCreateMaps("nvi", '<Plug>RMakePDFKb',     'kl', ':call RMakeRmd("beamer_presentation")')
-    call RCreateMaps("nvi", '<Plug>RMakeWord',      'kw', ':call RMakeRmd("word_document")')
-    call RCreateMaps("nvi", '<Plug>RMakeHTML',      'kh', ':call RMakeRmd("html_document")')
-    call RCreateMaps("nvi", '<Plug>RMakeODT',       'ko', ':call RMakeRmd("odt_document")')
-endfunction
-
-
 " For each noremap we need a vnoremap including <Esc> before the :call,
 " otherwise nvim will call the function as many times as the number of selected
 " lines. If we put <Esc> in the noremap, nvim will bell.
@@ -2816,35 +2932,98 @@ endfunction
 "   combo: combination of letters that make the shortcut
 "   target: the command or function to be called
 function RCreateMaps(type, plug, combo, target)
+    if index(g:R_disable_cmds, a:plug) > -1
+        return
+    endif
     if a:type =~ '0'
         let tg = a:target . '<CR>0'
         let il = 'i'
+    elseif a:type =~ '\.'
+        let tg = a:target
+        let il = 'a'
     else
         let tg = a:target . '<CR>'
         let il = 'a'
     endif
     if a:type =~ "n"
-        if hasmapto(a:plug, "n")
-            exec 'noremap <buffer><silent> ' . a:plug . ' ' . tg
-        elseif g:R_user_maps_only == 0
+        exec 'noremap <buffer><silent> <Plug>' . a:plug . ' ' . tg
+        if g:R_user_maps_only != 1 && !hasmapto('<Plug>' . a:plug, "n")
             exec 'noremap <buffer><silent> <LocalLeader>' . a:combo . ' ' . tg
         endif
     endif
     if a:type =~ "v"
-        if hasmapto(a:plug, "v")
-            exec 'vnoremap <buffer><silent> ' . a:plug . ' <Esc>' . tg
-        elseif g:R_user_maps_only == 0
+        exec 'vnoremap <buffer><silent> <Plug>' . a:plug . ' <Esc>' . tg
+        if g:R_user_maps_only != 1 && !hasmapto('<Plug>' . a:plug, "v")
             exec 'vnoremap <buffer><silent> <LocalLeader>' . a:combo . ' <Esc>' . tg
         endif
     endif
     if g:R_insert_mode_cmds == 1 && a:type =~ "i"
-        if hasmapto(a:plug, "i")
-            exec 'inoremap <buffer><silent> ' . a:plug . ' <Esc>' . tg . il
-        elseif g:R_user_maps_only == 0
+        exec 'inoremap <buffer><silent> <Plug>' . a:plug . ' <Esc>' . tg . il
+        if g:R_user_maps_only != 1 && !hasmapto('<Plug>' . a:plug, "i")
             exec 'inoremap <buffer><silent> <LocalLeader>' . a:combo . ' <Esc>' . tg . il
         endif
     endif
 endfunction
+
+function RControlMaps()
+    " List space, clear console, clear all
+    "-------------------------------------
+    call RCreateMaps('nvi', 'RListSpace',    'rl', ':call g:SendCmdToR("ls()")')
+    call RCreateMaps('nvi', 'RClearConsole', 'rr', ':call RClearConsole()')
+    call RCreateMaps('nvi', 'RClearAll',     'rm', ':call RClearAll()')
+
+    " Print, names, structure
+    "-------------------------------------
+    call RCreateMaps('ni', 'RObjectPr',    'rp', ':call RAction("print")')
+    call RCreateMaps('ni', 'RObjectNames', 'rn', ':call RAction("nvim.names")')
+    call RCreateMaps('ni', 'RObjectStr',   'rt', ':call RAction("str")')
+    call RCreateMaps('ni', 'RViewDF',      'rv', ':call RAction("viewobj")')
+    call RCreateMaps('ni', 'RViewDFs',     'vs', ':call RAction("viewobj", ", howto=''split''")')
+    call RCreateMaps('ni', 'RViewDFv',     'vv', ':call RAction("viewobj", ", howto=''vsplit''")')
+    call RCreateMaps('ni', 'RViewDFa',     'vh', ':call RAction("viewobj", ", howto=''above 7split'', nrows=6")')
+    call RCreateMaps('ni', 'RDputObj',     'td', ':call RAction("dputtab")')
+
+    call RCreateMaps('v', 'RObjectPr',     'rp', ':call RAction("print", "v")')
+    call RCreateMaps('v', 'RObjectNames',  'rn', ':call RAction("nvim.names", "v")')
+    call RCreateMaps('v', 'RObjectStr',    'rt', ':call RAction("str", "v")')
+    call RCreateMaps('v', 'RViewDF',       'rv', ':call RAction("viewobj", "v")')
+    call RCreateMaps('v', 'RViewDFs',      'vs', ':call RAction("viewobj", "v", ", howto=''split''")')
+    call RCreateMaps('v', 'RViewDFv',      'vv', ':call RAction("viewobj", "v", ", howto=''vsplit''")')
+    call RCreateMaps('v', 'RViewDFa',      'vh', ':call RAction("viewobj", "v", ", howto=''above 7split'', nrows=6")')
+    call RCreateMaps('v', 'RDputObj',      'td', ':call RAction("dputtab", "v")')
+
+    " Arguments, example, help
+    "-------------------------------------
+    call RCreateMaps('nvi', 'RShowArgs',   'ra', ':call RAction("args")')
+    call RCreateMaps('nvi', 'RShowEx',     're', ':call RAction("example")')
+    call RCreateMaps('nvi', 'RHelp',       'rh', ':call RAction("help")')
+
+    " Summary, plot, both
+    "-------------------------------------
+    call RCreateMaps('ni', 'RSummary',     'rs', ':call RAction("summary")')
+    call RCreateMaps('ni', 'RPlot',        'rg', ':call RAction("plot")')
+    call RCreateMaps('ni', 'RSPlot',       'rb', ':call RAction("plotsumm")')
+
+    call RCreateMaps('v', 'RSummary',      'rs', ':call RAction("summary", "v")')
+    call RCreateMaps('v', 'RPlot',         'rg', ':call RAction("plot", "v")')
+    call RCreateMaps('v', 'RSPlot',        'rb', ':call RAction("plotsumm", "v")')
+
+    " Build list of objects for omni completion
+    "-------------------------------------
+    call RCreateMaps('nvi', 'RUpdateObjBrowser', 'ro', ':call RObjBrowser()')
+    call RCreateMaps('nvi', 'ROpenLists',        'r=', ':call RBrOpenCloseLs("O")')
+    call RCreateMaps('nvi', 'RCloseLists',       'r-', ':call RBrOpenCloseLs("C")')
+
+    " Render script with rmarkdown
+    "-------------------------------------
+    call RCreateMaps('nvi', 'RMakeRmd',    'kr', ':call RMakeRmd("default")')
+    call RCreateMaps('nvi', 'RMakePDFK',   'kp', ':call RMakeRmd("pdf_document")')
+    call RCreateMaps('nvi', 'RMakePDFKb',  'kl', ':call RMakeRmd("beamer_presentation")')
+    call RCreateMaps('nvi', 'RMakeWord',   'kw', ':call RMakeRmd("word_document")')
+    call RCreateMaps('nvi', 'RMakeHTML',   'kh', ':call RMakeRmd("html_document")')
+    call RCreateMaps('nvi', 'RMakeODT',    'ko', ':call RMakeRmd("odt_document")')
+endfunction
+
 
 function SpaceForRGrDevice()
     let savesb = &switchbuf
@@ -2865,86 +3044,91 @@ endfunction
 function RCreateStartMaps()
     " Start
     "-------------------------------------
-    call RCreateMaps("nvi", '<Plug>RStart',        'rf', ':call StartR("R")')
-    call RCreateMaps("nvi", '<Plug>RCustomStart',  'rc', ':call StartR("custom")')
+    call RCreateMaps('nvi', 'RStart',       'rf', ':call StartR("R")')
+    call RCreateMaps('nvi', 'RCustomStart', 'rc', ':call StartR("custom")')
 
     " Close
     "-------------------------------------
-    call RCreateMaps("nvi", '<Plug>RClose',        'rq', ":call RQuit('nosave')")
-    call RCreateMaps("nvi", '<Plug>RSaveClose',    'rw', ":call RQuit('save')")
+    call RCreateMaps('nvi', 'RClose',       'rq', ":call RQuit('nosave')")
+    call RCreateMaps('nvi', 'RSaveClose',   'rw', ":call RQuit('save')")
 
 endfunction
 
 function RCreateEditMaps()
     " Edit
     "-------------------------------------
-    call RCreateMaps("ni", '<Plug>RToggleComment',   'xx', ':call RComment("normal")')
-    call RCreateMaps("v", '<Plug>RToggleComment',   'xx', ':call RComment("selection")')
-    call RCreateMaps("ni", '<Plug>RSimpleComment',   'xc', ':call RSimpleCommentLine("normal", "c")')
-    call RCreateMaps("v", '<Plug>RSimpleComment',   'xc', ':call RSimpleCommentLine("selection", "c")')
-    call RCreateMaps("ni", '<Plug>RSimpleUnComment',   'xu', ':call RSimpleCommentLine("normal", "u")')
-    call RCreateMaps("v", '<Plug>RSimpleUnComment',   'xu', ':call RSimpleCommentLine("selection", "u")')
-    call RCreateMaps("ni", '<Plug>RRightComment',   ';', ':call MovePosRCodeComment("normal")')
-    call RCreateMaps("v", '<Plug>RRightComment',    ';', ':call MovePosRCodeComment("selection")')
+    call RCreateMaps('ni', 'RToggleComment',   'xx', ':call RComment("normal")')
+    call RCreateMaps('v',  'RToggleComment',   'xx', ':call RComment("selection")')
+    call RCreateMaps('ni', 'RSimpleComment',   'xc', ':call RSimpleCommentLine("normal", "c")')
+    call RCreateMaps('v',  'RSimpleComment',   'xc', ':call RSimpleCommentLine("selection", "c")')
+    call RCreateMaps('ni', 'RSimpleUnComment', 'xu', ':call RSimpleCommentLine("normal", "u")')
+    call RCreateMaps('v',  'RSimpleUnComment', 'xu', ':call RSimpleCommentLine("selection", "u")')
+    call RCreateMaps('ni', 'RRightComment',     ';', ':call MovePosRCodeComment("normal")')
+    call RCreateMaps('v',  'RRightComment',     ';', ':call MovePosRCodeComment("selection")')
     " Replace 'underline' with '<-'
     if g:R_assign == 1 || g:R_assign == 2
         silent exe 'inoremap <buffer><silent> ' . g:R_assign_map . ' <Esc>:call ReplaceUnderS()<CR>a'
-    endif
-    if g:R_args_in_stline
-        autocmd InsertCharPre * call RSetStatusLine()
-        autocmd InsertLeave * call RestoreStatusLine(1)
-    endif
-
-    if !hasmapto("<Plug>RCompleteArgs", "i")
-        inoremap <buffer><silent> <C-X><C-A> <C-R>=RCompleteArgs()<CR>
     endif
 endfunction
 
 function RCreateSendMaps()
     " Block
     "-------------------------------------
-    call RCreateMaps("ni", '<Plug>RSendMBlock',     'bb', ':call SendMBlockToR("silent", "stay")')
-    call RCreateMaps("ni", '<Plug>RESendMBlock',    'be', ':call SendMBlockToR("echo", "stay")')
-    call RCreateMaps("ni", '<Plug>RDSendMBlock',    'bd', ':call SendMBlockToR("silent", "down")')
-    call RCreateMaps("ni", '<Plug>REDSendMBlock',   'ba', ':call SendMBlockToR("echo", "down")')
+    call RCreateMaps('ni', 'RSendMBlock',     'bb', ':call SendMBlockToR("silent", "stay")')
+    call RCreateMaps('ni', 'RESendMBlock',    'be', ':call SendMBlockToR("echo", "stay")')
+    call RCreateMaps('ni', 'RDSendMBlock',    'bd', ':call SendMBlockToR("silent", "down")')
+    call RCreateMaps('ni', 'REDSendMBlock',   'ba', ':call SendMBlockToR("echo", "down")')
 
     " Function
     "-------------------------------------
-    call RCreateMaps("nvi", '<Plug>RSendFunction',  'ff', ':call SendFunctionToR("silent", "stay")')
-    call RCreateMaps("nvi", '<Plug>RDSendFunction', 'fe', ':call SendFunctionToR("echo", "stay")')
-    call RCreateMaps("nvi", '<Plug>RDSendFunction', 'fd', ':call SendFunctionToR("silent", "down")')
-    call RCreateMaps("nvi", '<Plug>RDSendFunction', 'fa', ':call SendFunctionToR("echo", "down")')
+    call RCreateMaps('nvi', 'RSendFunction',  'ff', ':call SendFunctionToR("silent", "stay")')
+    call RCreateMaps('nvi', 'RDSendFunction', 'fe', ':call SendFunctionToR("echo", "stay")')
+    call RCreateMaps('nvi', 'RDSendFunction', 'fd', ':call SendFunctionToR("silent", "down")')
+    call RCreateMaps('nvi', 'RDSendFunction', 'fa', ':call SendFunctionToR("echo", "down")')
 
     " Selection
     "-------------------------------------
-    call RCreateMaps("v", '<Plug>RSendSelection',   'ss', ':call SendSelectionToR("silent", "stay")')
-    call RCreateMaps("v", '<Plug>RESendSelection',  'se', ':call SendSelectionToR("echo", "stay")')
-    call RCreateMaps("v", '<Plug>RDSendSelection',  'sd', ':call SendSelectionToR("silent", "down")')
-    call RCreateMaps("v", '<Plug>REDSendSelection', 'sa', ':call SendSelectionToR("echo", "down")')
-    call RCreateMaps('v', '<Plug>RSendSelAndInsertOutput', 'so', ':call SendSelectionToR("echo", "stay", "NewtabInsert")')
+    call RCreateMaps('n', 'RSendSelection',   'ss', ':call SendSelectionToR("silent", "stay", "normal")')
+    call RCreateMaps('n', 'RESendSelection',  'se', ':call SendSelectionToR("echo", "stay", "normal")')
+    call RCreateMaps('n', 'RDSendSelection',  'sd', ':call SendSelectionToR("silent", "down", "normal")')
+    call RCreateMaps('n', 'REDSendSelection', 'sa', ':call SendSelectionToR("echo", "down", "normal")')
+
+    call RCreateMaps('v', 'RSendSelection',   'ss', ':call SendSelectionToR("silent", "stay")')
+    call RCreateMaps('v', 'RESendSelection',  'se', ':call SendSelectionToR("echo", "stay")')
+    call RCreateMaps('v', 'RDSendSelection',  'sd', ':call SendSelectionToR("silent", "down")')
+    call RCreateMaps('v', 'REDSendSelection', 'sa', ':call SendSelectionToR("echo", "down")')
+    call RCreateMaps('v', 'RSendSelAndInsertOutput', 'so', ':call SendSelectionToR("echo", "stay", "NewtabInsert")')
 
     " Paragraph
     "-------------------------------------
-    call RCreateMaps("ni", '<Plug>RSendParagraph',   'pp', ':call SendParagraphToR("silent", "stay")')
-    call RCreateMaps("ni", '<Plug>RESendParagraph',  'pe', ':call SendParagraphToR("echo", "stay")')
-    call RCreateMaps("ni", '<Plug>RDSendParagraph',  'pd', ':call SendParagraphToR("silent", "down")')
-    call RCreateMaps("ni", '<Plug>REDSendParagraph', 'pa', ':call SendParagraphToR("echo", "down")')
+    call RCreateMaps('ni', 'RSendParagraph',   'pp', ':call SendParagraphToR("silent", "stay")')
+    call RCreateMaps('ni', 'RESendParagraph',  'pe', ':call SendParagraphToR("echo", "stay")')
+    call RCreateMaps('ni', 'RDSendParagraph',  'pd', ':call SendParagraphToR("silent", "down")')
+    call RCreateMaps('ni', 'REDSendParagraph', 'pa', ':call SendParagraphToR("echo", "down")')
 
     if &filetype == "rnoweb" || &filetype == "rmd" || &filetype == "rrst"
-        call RCreateMaps("ni", '<Plug>RSendChunkFH', 'ch', ':call SendFHChunkToR()')
+        call RCreateMaps('ni', 'RSendChunkFH', 'ch', ':call SendFHChunkToR()')
     endif
 
     " *Line*
     "-------------------------------------
-    call RCreateMaps("ni", '<Plug>RSendLine', 'l', ':call SendLineToR("stay")')
-    call RCreateMaps('ni0', '<Plug>RDSendLine', 'd', ':call SendLineToR("down")')
-    call RCreateMaps('ni0', '<Plug>RDSendLineAndInsertOutput', 'o', ':call SendLineToRAndInsertOutput()')
-    call RCreateMaps('v', '<Plug>RDSendLineAndInsertOutput', 'o', ':call RWarningMsg("This command does not work over a selection of lines.")')
-    call RCreateMaps('i', '<Plug>RSendLAndOpenNewOne', 'q', ':call SendLineToR("newline")')
-    call RCreateMaps('n', '<Plug>RNLeftPart', 'r<left>', ':call RSendPartOfLine("left", 0)')
-    call RCreateMaps('n', '<Plug>RNRightPart', 'r<right>', ':call RSendPartOfLine("right", 0)')
-    call RCreateMaps('i', '<Plug>RILeftPart', 'r<left>', 'l:call RSendPartOfLine("left", 1)')
-    call RCreateMaps('i', '<Plug>RIRightPart', 'r<right>', 'l:call RSendPartOfLine("right", 1)')
+    call RCreateMaps('ni',  'RSendLine', 'l', ':call SendLineToR("stay")')
+    call RCreateMaps('ni0', 'RDSendLine', 'd', ':call SendLineToR("down")')
+    call RCreateMaps('ni0', '(RDSendLineAndInsertOutput)', 'o', ':call SendLineToRAndInsertOutput()')
+    call RCreateMaps('v',   '(RDSendLineAndInsertOutput)', 'o', ':call RWarningMsg("This command does not work over a selection of lines.")')
+    call RCreateMaps('i',   'RSendLAndOpenNewOne', 'q', ':call SendLineToR("newline")')
+    call RCreateMaps('ni.', 'RSendMotion', 'm', ':set opfunc=SendMotionToR<CR>g@')
+    call RCreateMaps('n',   'RNLeftPart', 'r<left>', ':call RSendPartOfLine("left", 0)')
+    call RCreateMaps('n',   'RNRightPart', 'r<right>', ':call RSendPartOfLine("right", 0)')
+    call RCreateMaps('i',   'RILeftPart', 'r<left>', 'l:call RSendPartOfLine("left", 1)')
+    call RCreateMaps('i',   'RIRightPart', 'r<right>', 'l:call RSendPartOfLine("right", 1)')
+    if &filetype == "r"
+        call RCreateMaps('n', 'RSendAboveLines',  'su', ':call SendAboveLinesToR()')
+    endif
+
+    " Debug
+    call RCreateMaps('n',   'RDebug', 'bg', ':call RAction("debug")')
+    call RCreateMaps('n',   'RUndebug', 'ud', ':call RAction("undebug")')
 endfunction
 
 function RBufEnter()
@@ -2982,16 +3166,14 @@ function RVimLeave()
     if has('nvim')
         for job in keys(g:rplugin.jobs)
             if IsJobRunning(job)
-                if exists('*chanclose')
-                    call chanclose(g:rplugin.jobs[job])
-                else
-                    call jobstop(g:rplugin.jobs[job])
+                if job == 'ClientServer'
+                    " Avoid warning of exit status 141
+                    call JobStdin(g:rplugin.jobs["ClientServer"], "8\n")
+                    sleep 20m
                 endif
             endif
         endfor
     endif
-    " give some time to get the jobs closed
-    sleep 20m
 
     for fn in s:del_list
         call delete(fn)
@@ -3001,195 +3183,393 @@ function RVimLeave()
     endif
 endfunction
 
+" Did R successfully finished evaluating a command?
+let s:R_task_completed = 0
+
+" Function called by nvimcom
+function RTaskCompleted()
+    let s:R_task_completed = 1
+    if g:R_hi_fun_globenv == 2
+        call SendToNvimcom("\002" . $NVIMR_ID)
+        call UpdateRGlobalEnv(0)
+    endif
+endfunction
+
+let s:updating_globalenvlist = 0
+let s:waiting_glblnv_list = 0
+" Function called by nvimcom
+function GlblEnvUpdated(changed)
+    let s:updating_globalenvlist = 0
+    if s:waiting_glblnv_list
+        if a:changed == 0
+            " Nothing to update
+            let s:waiting_glblnv_list = 0
+        endif
+    endif
+endfunction
+
+function ROnInsertEnter()
+    if g:R_hi_fun_globenv != 0
+        call UpdateRGlobalEnv(0)
+    endif
+endfunction
+
 let s:nglobfun = 0
-function CheckRGlobalEnv()
-    if g:R_hi_fun_globenv == 0
+function UpdateRGlobalEnv(block)
+    if ! s:R_task_completed
         return
     endif
-    if !filereadable(g:rplugin.tmpdir . '/GlobalEnvList_' . $NVIMR_ID)
-        return
-    endif
-    let s:globalenv_lines = readfile(g:rplugin.tmpdir . '/GlobalEnvList_' . $NVIMR_ID)
-    let funlist = filter(copy(s:globalenv_lines), 'v:val =~# "\x06function\x06function\x06"')
+    let s:R_task_completed = 0
 
-    if g:R_hi_fun_globenv == 2 && (s:nglobfun || len(funlist))
-        " Completely redo the syntax highlight of .GlobalEnv functions
-        syntax clear rGlobEnvFun
-        let s:nglobfun = len(funlist)
-    endif
-
-    if len(funlist)
-        " Highlight functions that were not highlighted yet
-        call map(funlist, 'substitute(v:val, "\x06.*", "", "")')
-        let hifunlist = filter(split(execute("syntax"), "\n"), 'v:val =~# "rGlobEnvFun"')
-        let hifunlist = map(hifunlist, 'substitute(v:val, ".* ", "", "")')
-        for globf in funlist
-            let found = 0
-            for hf in hifunlist
-                if globf ==# hf
-                    let found = 1
-                    break
-                endif
-            endfor
-            if !found
-                if !exists('g:R_hi_fun_paren') || g:R_hi_fun_paren == 0
-                    exe 'syntax keyword rGlobEnvFun ' . globf
-                else
-                    exe 'syntax match rGlobEnvFun /\<' . globf . '\s*\ze(/'
-                endif
-            endif
-        endfor
-    endif
-endfunction
-
-function FinishBuildROmniList()
-    let s:NvimbolFinished = 1
-endfunction
-
-" Tell R to create a list of objects file listing all currently available
-" objects in its environment. The file is necessary for omni completion.
-function BuildROmniList(pattern)
     if string(g:SendCmdToR) == "function('SendCmdToR_fake')"
         return
     endif
 
-    let omnilistcmd = 'nvimcom:::nvim.bol(".GlobalEnv"'
-
-    if g:R_allnames == 1
-        let omnilistcmd = omnilistcmd . ', allnames = TRUE'
+    " If UpdateRGlobalEnv() is called at least once, increase the
+    " value of g:R_hi_fun_globenv to 1.
+    if g:R_hi_fun_globenv == 0
+        let g:R_hi_fun_globenv = 1
     endif
-    let omnilistcmd = omnilistcmd . ', pattern = "' . a:pattern . '")'
 
-    let s:NvimbolFinished = 0
-    call delete(g:rplugin.tmpdir . "/nvimbol_finished")
-    call AddForDeletion(g:rplugin.tmpdir . "/nvimbol_finished")
-
-    call SendToNvimcom("\x08" . $NVIMR_ID . omnilistcmd)
+    let s:updating_globalenvlist = 1
+    call SendToNvimcom("\004" . $NVIMR_ID)
 
     if g:rplugin.nvimcom_port == 0
         sleep 500m
         return
     endif
 
-    " We can't return from this function and wait for a message from nvimcom
-    " because omni completion in Vim/Neovim requires the list of completions
-    " as the return value of the 'omnifunc'.
-    sleep 10m
-    let ii = 0
-    let max_ii = 100 * g:R_wait_reply
-    while s:NvimbolFinished == 0 && ii < max_ii
-        let ii += 1
+    if a:block
+        " We can't return from this function and wait for a message from
+        " nvimcom because both omni completion and the Object Browser require
+        " the list of completions immediately.
         sleep 10m
-    endwhile
-    if ii == max_ii
-        call RWarningMsg("No longer waiting...")
+        let ii = 0
+        let max_ii = 100 * g:R_wait_reply
+        while s:updating_globalenvlist && ii < max_ii
+            let ii += 1
+            sleep 10m
+        endwhile
+        if ii == max_ii
+            call RWarningMsg("No longer waiting...")
+            return
+        endif
+    else
+        let s:waiting_glblnv_list = 1
+    endif
+endfunction
+
+function UpdateLocalFunctions(funnames)
+    syntax clear rGlobEnvFun
+    let flist = split(a:funnames, " ")
+    for fnm in flist
+        if !exists('g:R_hi_fun_paren') || g:R_hi_fun_paren == 0
+            exe 'syntax keyword rGlobEnvFun ' . fnm
+        else
+            exe 'syntax match rGlobEnvFun /\<' . fnm . '\s*\ze(/'
+        endif
+    endfor
+endfunction
+
+let s:float_win = 0
+let s:compl_event = {}
+let g:rplugin.compl_cls = ''
+
+function FormatInfo(width, needblank)
+    let ud = s:compl_event['completed_item']['user_data']
+    let g:rplugin.compl_cls = ud['cls']
+
+    let info = ''
+    if ud['cls'] == 'a'
+        let info = ' ' . FormatTxt(ud['argument'], ' ', " \n  ", a:width - 1)
+    else
+        if ud['descr'] != ''
+            let info = ' ' . FormatTxt(ud['descr'], ' ', " \n ", a:width - 1) . ' '
+        endif
+        if ud['cls'] == 'f'
+            if ud['descr'] != '' && s:usage != ''
+                let info .= "\n————\n"
+            endif
+            if s:usage != ''
+                " Function usage delimited by non separable spaces (digraph NS)
+                let info .= ' ' . FormatTxt(s:usage, ', ', ",  \n   ", a:width) . ' '
+            endif
+        endif
+        if a:width > 59 && has_key(ud, 'summary')
+            if ud['descr'] != ''
+                let info .= "\n————\n"
+            endif
+            let info .= " " . join(ud['summary'], "\n ") . " "
+        endif
+    endif
+
+    if info == ''
+        return []
+    endif
+    if a:needblank
+        let lines = [''] + split(info, "\n") + ['']
+    else
+        let lines = split(info, "\n") + ['']
+    endif
+    return lines
+endfunction
+
+function CreateNewFloat(...)
+    if len(s:compl_event) == 0
         return
     endif
 
-    if string(g:SendCmdToR) == "function('SendCmdToR_fake')"
-        let s:globalenv_lines = []
+    let wrd = s:compl_event['completed_item']['word']
+
+    if s:compl_event['completed_item']['user_data']['cls'] == 'f'
+        let usage = deepcopy(s:compl_event['completed_item']['user_data']['usage'])
+        call map(usage, 'join(v:val, " = ")')
+        let usage = join(usage, ", ")
+        if usage == 'not_checked'
+            " Function at the .GlobalEnv
+            let s:ArgCompletionFinished = 0
+            call delete(g:rplugin.tmpdir . "/args_for_completion")
+            call SendToNvimcom("\x08" . $NVIMR_ID . 'nvimcom:::nvim.GlobalEnv.fun.args("' . wrd . '")')
+            let ii = 20
+            while ii > 0 && s:ArgCompletionFinished == 0
+                let ii = ii - 1
+                sleep 30m
+            endwhile
+            if filereadable(g:rplugin.tmpdir . "/args_for_completion")
+                let usage = readfile(g:rplugin.tmpdir . "/args_for_completion")[0]
+                let usage = '[' . substitute(usage, "\002", "'", 'g') . ']'
+                let usage = eval(usage)
+                call map(usage, 'join(v:val, " = ")')
+                let usage = join(usage, ", ")
+            else
+                let usage = "COULD NOT GET ARGUMENTS"
+            endif
+        endif
+        let s:usage = wrd . '(' . usage . ')'
+    elseif  wrd =~ '\k\{-}\$\k\{-}'
+        let s:ArgCompletionFinished = 0
+        call delete(g:rplugin.tmpdir . "/args_for_completion")
+        call SendToNvimcom("\x08" . $NVIMR_ID . 'nvimcom:::nvim.get.summary(' . wrd . ', 59)')
+        let ii = 20
+        while ii > 0 && s:ArgCompletionFinished == 0
+            let ii = ii - 1
+            sleep 30m
+        endwhile
+        if filereadable(g:rplugin.tmpdir . "/args_for_completion")
+            let s:compl_event['completed_item']['user_data']['summary'] = readfile(g:rplugin.tmpdir . "/args_for_completion")
+        endif
+    endif
+
+    " Get the required height for a standard float preview window
+    let flines = FormatInfo(60, 1)
+    if len(flines) == 0
+        call CloseFloatWin()
+        return
+    endif
+    let reqh = len(flines) > 15 ? 15 : len(flines)
+
+    " Ensure that some variables are integers:
+    exe 'let mc = ' . substitute(string(s:compl_event['col']), '\..*', '', '')
+    exe 'let mr = ' . substitute(string(s:compl_event['row']), '\..*', '', '')
+    exe 'let mw = ' . substitute(string(s:compl_event['width']), '\..*', '', '')
+    exe 'let mh = ' . substitute(string(s:compl_event['height']), '\..*', '', '')
+
+    " Default position and size of float window (at the right side of the popup menu)
+    let has_space = 1
+    let needblank = 0
+    let frow = mr
+    let flwd = 60
+    let fanchor = 'NW'
+    let fcol = mc + mw + s:compl_event['scrollbar']
+
+    " Required to fix the position and size of the float window
+    let dspwd = &columns
+    let freebelow = (mr == (line('.') - line('w0')) ? &lines - mr - mh : &lines - mr) - 3
+    let freeright = dspwd - mw - mc - s:compl_event['scrollbar']
+    let freeleft = mc - 1
+    let freetop = mr - 1
+
+    " If there is enough vertical space, open the window beside the menu
+    if freebelow > reqh && (freeright > 30 || freeleft > 30)
+        if freeright > 30
+            " right side
+            let flwd = freeright > 60 ? 60 : freeright
+        else
+            " left side
+            let flwd = (mc - 1) > 60 ? 60 : (mc - 1)
+            let fcol = mc - 1
+            let fanchor = 'NE'
+        endif
     else
-        let s:globalenv_lines = readfile(g:rplugin.tmpdir . "/GlobalEnvList_" . $NVIMR_ID)
+        " If there is enough vertical space and enough right space, then, if the menu
+        "   - is below the current line, open the window below the menu
+        "   - is above the current line, open the window above the menu
+        let freeright = dspwd - mc
+        let freeabove = mr - 1
+        let freebelow = &lines - mr - mh - 3
+
+        if freeright > 45 && (mr == (line('.') - line('w0') + 1)) && freebelow > reqh
+            " below the menu
+            let flwd = freeright > 60 ? 60 : freeright
+            let fcol = mc - 1
+            let frow = mr + mh
+            let needblank = 1
+        elseif freeright > 45 && (line('.') - line('w0') + 1) > mr && freeabove > reqh
+            " above the menu
+            let flwd = freeright > 60 ? 60 : freeright
+            let fcol = mc - 1
+            let frow = mr
+            let fanchor = 'SW'
+        else
+            " Finally, check if it's possible to open the window
+            " either on the top or on the bottom of the display
+            let flwd = dspwd
+            let flines = FormatInfo(flwd, 0)
+            let reqh = len(flines) > 15 ? 15 : len(flines)
+            let fcol = 0
+
+            if freeabove > reqh || (freeabove > 3 && freeabove > freebelow)
+                " top
+                let frow = 0
+            elseif freebelow > 3
+                " bottom
+                let frow = &lines
+                let fanchor = 'SW'
+            else
+                " no space available
+                let has_space = 0
+            endif
+        endif
+    endif
+
+    if len(flines) == 0 || has_space == 0
+        return
+    endif
+
+    " Now that the position is defined, calculate the available height
+    if frow == &lines
+        if mr == (line('.') - line('w0') + 1)
+            let maxh = &lines - mr - mh - 2
+        else
+            let maxh = &lines - line('.') + line('w0') - 2
+        endif
+        let needblank = 1
+    elseif frow == 0
+        let maxh = mr - 3
+    else
+        let maxh = &lines - frow - 2
+    endif
+
+    " Open the window if there is enough available height
+    if maxh < 2
+        return
+    endif
+
+    let flines = FormatInfo(flwd, needblank)
+    " replace ———— with a complete line
+    let realwidth = 10
+    for lin in flines
+        if strdisplaywidth(lin) > realwidth
+            let realwidth = strdisplaywidth(lin)
+        endif
+    endfor
+
+    if has("win32") && !has("nvim")
+        call map(flines, 'substitute(v:val, "^————$", repeat("-", realwidth), "")')
+    else
+        call map(flines, 'substitute(v:val, "^————$", repeat("—", realwidth), "")')
+    endif
+
+    let flht = (len(flines) > maxh) ? maxh : len(flines)
+
+    if has('nvim')
+        if !exists('s:float_buf')
+            let s:float_buf = nvim_create_buf(v:false, v:true)
+            call setbufvar(s:float_buf, '&buftype', 'nofile')
+            call setbufvar(s:float_buf, '&bufhidden', 'hide')
+            call setbufvar(s:float_buf, '&swapfile', 0)
+            call setbufvar(s:float_buf, '&tabstop', 2)
+            call setbufvar(s:float_buf, '&undolevels', -1)
+        endif
+        call nvim_buf_set_option(s:float_buf, 'syntax', 'rdocpreview')
+
+        call nvim_buf_set_lines(s:float_buf, 0, -1, v:true, flines)
+
+        let opts = {'relative': 'editor', 'width': realwidth, 'height': flht,
+                    \ 'col': fcol, 'row': frow, 'anchor': fanchor, 'style': 'minimal'}
+        if s:float_win
+            call nvim_win_set_config(s:float_win, opts)
+        else
+            let s:float_win = nvim_open_win(s:float_buf, 0, opts)
+            call setwinvar(s:float_win, '&wrap', 1)
+            call setwinvar(s:float_win, '&colorcolumn', 0)
+            call setwinvar(s:float_win, '&signcolumn', 'no')
+        endif
+    else
+        if fanchor == 'NE'
+            let fpos = 'topright'
+        elseif fanchor == 'SW'
+            let fpos = 'botleft'
+            let frow -= 1
+        else
+            let fpos = 'topleft'
+        endif
+        if s:float_win
+            call popup_close(s:float_win)
+        endif
+        let s:float_win = popup_create(flines, #{
+                    \ line: frow + 1, col: fcol, pos: fpos,
+                    \ maxheight: flht})
     endif
 endfunction
 
-function RFillOmniMenu(base, newbase, prefix, pkg, olines, toplev)
-    let resp = []
-    let newlist = filter(copy(a:olines), 'v:val =~ a:newbase')
-    for line in newlist
-        " Delete information about package eventually added by nvim.args()
-        let line = substitute(line, "\x04.*", "", "")
-        " Skip elements of lists unless the user is really looking for them.
-        " Skip lists if the user is looking for one of its elements.
-        let obj = substitute(line, "\x06.*", "", "")
-        if (a:base !~ '\$' && obj =~ '\$') || (a:base =~ '\$' && obj !~ '\$')
-            continue
+function CloseFloatWin(...)
+    if has('nvim')
+        let id = win_id2win(s:float_win)
+        if id > 0
+            call nvim_win_close(s:float_win, 1)
+            let s:float_win = 0
         endif
-        " Idem with S4 objects
-        if (a:base !~ '@' && obj =~ '@') || (a:base =~ '@' && obj !~ '@')
-            continue
-        endif
-        let sln = split(line, "\x06", 1)
-        if a:pkg != "" && sln[3] != a:pkg
-            continue
-        endif
-        if len(a:toplev)
-            " Do not show an object from a package if it was masked by a
-            " toplevel object in .GlobalEnv
-            let masked = 0
-            let pkgobj = substitute(sln[0], "\\$.*", "", "")
-            let pkgobj = substitute(pkgobj, "@.*", "", "")
-            for tplv in a:toplev
-                if tplv == pkgobj
-                    let masked = 1
-                    continue
-                endif
-            endfor
-            if masked
-                continue
-            endif
-        endif
-        if sln[0] =~ "[ '%]"
-            let sln[0] = "`" . sln[0] . "`"
-        endif
-
-        let tmp = split(sln[4], "\x08")
-        if len(tmp) == 2
-            let descr = substitute(tmp[1], '\\N', "\n", "g") . "\n"
-        else
-            let descr = ""
-        endif
-        let ttl = "] " . substitute(descr, "\x05.*", "", "")
-
-        if g:R_show_args && len(sln) > 4
-            if tmp[0] =~ '""'
-                let tmp[0] = substitute(tmp[0], '"""', '"\\""', 'g')
-                let tmp[0] = substitute(tmp[0], "\"\"'\"", "\"\\\\\"'\"", 'g')
-            endif
-            let tmp[0] = substitute(tmp[0], "NO_ARGS", "", "")
-            let tmp[0] = substitute(tmp[0], "\x07", " = ", "g")
-            let descr = "Description: " . substitute(descr, ".*\x05", "", "")
-            if has("win32")
-                " curly single quote in UTF-8
-                let descr = substitute(descr, "\x91", "\xe2\x80\x98", "g")
-                let descr = substitute(descr, "\x92", "\xe2\x80\x99", "g")
-            endif
-            if descr ==# 'Description: '
-                let descr = ''
-            endif
-            if tmp[0] == "Not a function"
-                let usage =  ""
-            else
-                " Format usage paragraph according to the width of the current window
-                let xx = split(tmp[0], "\x09")
-                if len(xx) > 0
-                    let usageL = ["Usage: " . a:prefix . sln[0] . "(" . xx[0]]
-                    let ii = 0
-                    let jj = 1
-                    let ll = len(xx)
-                    let wl = winwidth(0) - 1
-                    while(jj < ll)
-                        if(len(usageL[ii] . ", " . xx[jj]) < wl)
-                            let usageL[ii] .= ", " . xx[jj]
-                        elseif jj < ll
-                            let usageL[ii] .= ","
-                            let ii += 1
-                            let usageL += ["           " . xx[jj]]
-                        endif
-                        let jj += 1
-                    endwhile
-                    let usage = join(usageL, "\n") . ")\t"
-                else
-                    let usage = "Usage: " . a:prefix . sln[0] . "()\t"
-                endif
-            endif
-            call add(resp, {'word': a:prefix . sln[0], 'menu': sln[1] . ' [' . sln[3] . ttl, 'info': descr . usage})
-        elseif len(sln) > 3
-            call add(resp, {'word': a:prefix . sln[0], 'menu': sln[1] . ' [' . sln[3] . ttl})
-        endif
-    endfor
-    return resp
+    else
+        call popup_close(s:float_win)
+        let s:float_win = 0
+    endif
 endfunction
+
+function OnCompleteDone()
+    call CloseFloatWin()
+    let s:user_data = {}
+endfunction
+
+let s:user_data = {}
+function StartFloatWin()
+    if ! pumvisible()
+        return
+    endif
+    " Other plugins (example, ncm-R) fill the 'user_data' dictionary
+    if has_key(v:event, 'completed_item') && has_key(v:event['completed_item'], 'word')
+        if s:user_data != {}
+            let s:compl_event = deepcopy(v:event)
+            let s:compl_event['completed_item']['user_data'] = deepcopy(s:user_data[v:event['completed_item']['word']])
+            call timer_start(1, 'CreateNewFloat', {})
+        elseif has_key(v:event['completed_item'], 'user_data') &&
+                    \ type(v:event['completed_item']['user_data']) == v:t_dict &&
+                    \ has_key(v:event['completed_item']['user_data'], 'cls')
+            let s:compl_event = deepcopy(v:event)
+            " Neovim doesn't allow to open a float window from here:
+            call timer_start(1, 'CreateNewFloat', {})
+        endif
+    elseif s:float_win
+        call CloseFloatWin()
+    endif
+endfunction
+
+" Delete the variable s:user_data, update syntax/rdocpreview.vim and change the condition below to
+" has('nvim-0.5.0') || has('patch-8.2.84') when it evaluates to TRUE in Ubuntu (perhaps, 20.10)
+if has('nvim-0.4.3') || has('patch-8.1.1705')
+    autocmd CompleteChanged * call StartFloatWin()
+    autocmd CompleteDone * call OnCompleteDone()
+endif
 
 function RGetNewBase(base)
     if a:base =~ ":::"
@@ -3212,107 +3592,42 @@ function RGetNewBase(base)
     return [newbase, prefix, pkg]
 endfunction
 
-function GetRCompletion(base)
-    let resp = []
-
-    if strlen(a:base) == 0
-        return resp
-    endif
-
-    if len(g:rplugin_omni_lines) == 0
-        call add(resp, {'word': a:base, 'menu': " [ List is empty. Was nvimcom library ever loaded? ]"})
-    endif
-
-    let baseinfo = RGetNewBase(a:base)
-    let newbase = baseinfo[0]
-    let prefix = baseinfo[1]
-    let pkg = baseinfo[2]
-
-    if newbase == ""
-        return resp
-    endif
-
-    if pkg == ""
-        call BuildROmniList(a:base)
-        let resp = RFillOmniMenu(a:base, newbase, prefix, pkg, s:globalenv_lines, [])
-        if filereadable(g:rplugin.tmpdir . "/nvimbol_finished")
-            let toplev = readfile(g:rplugin.tmpdir . "/nvimbol_finished")
+function FormatTxt(text, splt, jn, maxl)
+    let wlist = split(a:text, a:splt)
+    let txt = ['']
+    let ii = 0
+    let maxlen = a:maxl - len(a:jn)
+    for wrd in wlist
+        if strdisplaywidth(txt[ii] . a:splt . wrd) < maxlen
+            let txt[ii] .= a:splt . wrd
         else
-            let toplev = []
+            let ii += 1
+            let txt += [wrd]
         endif
-        let resp += RFillOmniMenu(a:base, newbase, prefix, pkg, g:rplugin_omni_lines, toplev)
-    else
-        let omf = split(globpath(g:rplugin.compldir, 'omnils_' . pkg . '_*'), "\n")
-        if len(omf) == 1
-            let olines = readfile(omf[0])
-            if len(olines) == 0 || (len(olines) == 1 && len(olines[0]) < 3)
-                return resp
-            endif
-            let resp = RFillOmniMenu(a:base, newbase, prefix, pkg, olines, [])
-        else
-            call add(resp, {'word': a:base, 'menu': ' [ List is empty. Was "' . pkg . '" library ever loaded? ]'})
-        endif
-    endif
-    return resp
-endfunction
-
-function GetRArgs0(base, rkeyword)
-    " If R isn't running, use the prebuilt list of objects
-    let argls = []
-    let flines = g:rplugin_omni_lines + s:globalenv_lines
-    call filter(flines, 'v:val =~ a:rkeyword && v:val =~ "\x06function\x06function\x06"')
-    for omniL in flines
-        let tmp1 = split(omniL, "\x06")
-        if len(tmp1) < 5
-            return []
-        endif
-        let info = tmp1[4]
-        let info = substitute(info, "\x08.*", "", "")
-        let argsL = split(info, "\x09")
-        for id in range(len(argsL))
-            let newkey = '^' . a:base
-            let tmp2 = split(argsL[id], "\x07")
-            if a:base == '' || tmp2[0] =~ newkey
-                if tmp2[0] == '...'
-                    let bv = "..."
-                    let wd = ""
-                    let mn = ""
-                elseif tmp2[0] == "NO_ARGS"
-                    let wd = ""
-                    let bv = "No arguments"
-                    let mn = ""
-                else
-                    let wd = tmp2[0] . " = "
-                    let bv = tmp2[0]
-                    if len(tmp2) == 2
-                        let mn = "= " . tmp2[1]
-                    else
-                        let mn = "="
-                    endif
-                endif
-                call add(argls, {'word': wd, 'abbr': bv, 'menu': mn})
-            endif
-        endfor
     endfor
-    return argls
+    let txt[0] = substitute(txt[0], '^' . a:splt, '', '')
+    return join(txt, a:jn)
 endfunction
 
-function GetRArgs1(base, rkeyword0, firstobj, pkg)
+function GetRArgs(base, rkeyword0, firstobj, pkg)
+    if string(g:SendCmdToR) == "function('SendCmdToR_fake')"
+        return []
+    endif
+
     let msg = 'nvimcom:::nvim_complete_args("' . a:rkeyword0 . '", "' . a:base . '"'
     if a:firstobj != ""
         let msg .= ', firstobj = "' . a:firstobj . '"'
     elseif a:pkg != ""
         let msg .= ', pkg = ' . a:pkg
     endif
-    if g:R_show_arg_help
-        let msg .= ', extrainfo = TRUE'
-    endif
-    let msg .= ')'
+    let msg .= ', extrainfo = TRUE)'
+
+    " Save documentation of arguments to be used by nclientserver
+    call delete(g:rplugin.tmpdir . "/args_for_completion")
     let s:ArgCompletionFinished = 0
-    call AddForDeletion(g:rplugin.tmpdir . "/args_for_completion")
     call SendToNvimcom("\x08" . $NVIMR_ID . msg)
 
-    let ii = 200
+    let ii = 20
     while ii > 0 && s:ArgCompletionFinished == 0
         let ii = ii - 1
         sleep 30m
@@ -3322,53 +3637,13 @@ function GetRArgs1(base, rkeyword0, firstobj, pkg)
         return []
     endif
 
-    let args_line = readfile(g:rplugin.tmpdir . "/args_for_completion")[0]
-    call delete(g:rplugin.tmpdir . "/args_for_completion")
-    let argls = []
-    if args_line[0] == "\x04" &&
-                \ len(split(args_line, "\x04")) == 1 ||
-                \ args_line == ""
-        return []
+    if exists('s:compl_menu')
+        unlet s:compl_menu
     endif
-    let tmp0 = split(args_line, "\x04")
-    let tmp = split(tmp0[0], "\x09")
-    if(len(tmp) > 0)
-        for id in range(len(tmp))
-            let tmp1 = split(tmp[id], "\x08")
-            if len(tmp1) > 1
-                let info = substitute(tmp1[1], "\\\\N", "\n", "g")
-            else
-                let info = " "
-            endif
-            let tmp2 = split(tmp1[0], "\x07")
-            if tmp2[0] == '...'
-                let wd = ""
-                let bv = "..."
-                let mn = ""
-            elseif tmp2[0] == "NO_ARGS"
-                let wd = ""
-                let bv = "No arguments"
-                let mn = ""
-            else
-                let wd = tmp2[0] . " = "
-                let bv = tmp2[0]
-                if len(tmp2) > 1
-                    let mn = "= " . tmp2[1]
-                else
-                    let mn = "="
-                endif
-            endif
-            if g:R_show_arg_help
-                call add(argls,  {'word': wd, 'abbr': bv, 'menu': mn, 'info': info})
-            else
-                call add(argls,  {'word': wd, 'abbr': bv, 'menu': mn})
-            endif
-        endfor
-        if len(argls) > 0 && len(tmp0) > 1
-            call add(argls, {'word': '', 'abbr': ' ', 'menu': tmp0[1]})
-        endif
-    endif
-    return argls
+    let s:waiting_compl_menu = 1
+    call JobStdin(g:rplugin.jobs["ClientServer"], "5A" . a:base .
+                \ "\002" . a:rkeyword0 . "\n")
+    return WaitRCompletion()
 endfunction
 
 function GetListOfRLibs(base)
@@ -3408,8 +3683,14 @@ function FindStartRObj()
     return idx2 - 1
 endfunction
 
+function SetComplMenu(cmn)
+    let s:compl_menu = deepcopy(a:cmn)
+    let s:waiting_compl_menu = 0
+endfunction
+
 function CompleteR(findstart, base)
     if a:findstart
+        let s:user_data = {}
         let line = getline(".")
         if b:rplugin_knitr_pattern != '' && line =~ b:rplugin_knitr_pattern
             let s:compl_type = 3
@@ -3430,70 +3711,109 @@ function CompleteR(findstart, base)
             return Ofun(a:findstart, a:base)
         endif
 
-        let line = getline(".")
-        let lnum = line(".")
-        let cpos = getpos(".")
-        let idx = cpos[2] - 2
-        let idx2 = cpos[2] - 2
-        let np = 1
-        let nl = 0
-        let argls = []
-        " Look up to 10 lines above for an opening parenthesis
-        while nl < 10
-            if line[idx] == '('
-                let np -= 1
-            elseif line[idx] == ')'
-                let np += 1
-            endif
-            if np == 0
-                " The opening parenthesis was found
-                call cursor(lnum, idx)
-                let rkeyword0 = RGetKeyword('@,48-57,_,.,:,$,@-@')
-                let firstobj = ""
-                if rkeyword0 =~ "::"
-                    let pkg = '"' . substitute(rkeyword0, "::.*", "", "") . '"'
-                    let rkeyword0 = substitute(rkeyword0, ".*::", "", "")
-                else
-                    if string(g:SendCmdToR) != "function('SendCmdToR_fake')"
-                        let firstobj = RGetFirstObj(rkeyword0)
+        if string(g:SendCmdToR) != "function('SendCmdToR_fake')"
+            " Check if we need function arguments
+            let line = getline(".")
+            let lnum = line(".")
+            let cpos = getpos(".")
+            let idx = cpos[2] - 2
+            let idx2 = cpos[2] - 2
+            let np = 1
+            let nl = 0
+            let argls = []
+            " Look up to 10 lines above for an opening parenthesis
+            while nl < 10
+                if line[idx] == '('
+                    let np -= 1
+                elseif line[idx] == ')'
+                    let np += 1
+                endif
+                if np == 0
+                    " The opening parenthesis was found
+                    call cursor(lnum, idx)
+                    let rkeyword0 = RGetKeyword('@,48-57,_,.,:,$,@-@')
+                    let firstobj = ""
+                    if rkeyword0 =~ "::"
+                        let pkg = '"' . substitute(rkeyword0, "::.*", "", "") . '"'
+                        let rkeyword0 = substitute(rkeyword0, ".*::", "", "")
+                    else
+                        if string(g:SendCmdToR) != "function('SendCmdToR_fake')"
+                            let firstobj = RGetFirstObj(rkeyword0)
+                        endif
+                        let pkg = ""
                     endif
-                    let pkg = ""
-                endif
-                let rkeyword = '^' . rkeyword0 . "\x06"
-                call cursor(cpos[1], cpos[2])
+                    call cursor(cpos[1], cpos[2])
 
-                if (rkeyword0 == "library" || rkeyword0 == "require") && IsFirstRArg(lnum, cpos)
-                    let argls = GetListOfRLibs(a:base)
-                    if len(argls)
-                        let s:is_completing = 1
-                        return argls
+                    if (rkeyword0 == "library" || rkeyword0 == "require") && IsFirstRArg(lnum, cpos)
+                        let argls = GetListOfRLibs(a:base)
+                        if len(argls)
+                            let s:is_completing = 1
+                            return argls
+                        endif
                     endif
-                endif
 
-                " If R is running, use it
-                if string(g:SendCmdToR) != "function('SendCmdToR_fake')"
-                    let argls = GetRArgs1(a:base, rkeyword0, firstobj, pkg)
-                else
-                    let argls = GetRArgs0(a:base, rkeyword)
+                    call UpdateRGlobalEnv(1)
+                    return GetRArgs(a:base, rkeyword0, firstobj, pkg)
                 endif
-                break
-            endif
-            let idx -= 1
-            if idx <= 0
-                let lnum -= 1
-                if lnum == 0
-                    break
+                let idx -= 1
+                if idx <= 0
+                    let lnum -= 1
+                    if lnum == 0
+                        break
+                    endif
+                    let line = getline(lnum)
+                    let idx = strlen(line)
+                    let nl +=1
                 endif
-                let line = getline(lnum)
-                let idx = strlen(line)
-                let nl +=1
-            endif
-        endwhile
-        if g:R_complete == 2 || len(argls) == 0
-            let argls += GetRCompletion(s:argkey)
+            endwhile
         endif
+
+        if exists('s:compl_menu')
+            unlet s:compl_menu
+        endif
+        call UpdateRGlobalEnv(1)
+        let s:waiting_compl_menu = 1
+        call JobStdin(g:rplugin.jobs["ClientServer"], "51" . a:base . "\n")
+        return WaitRCompletion()
+    endif
+endfunction
+
+function WaitRCompletion()
+    sleep 10m
+    let nwait = 0
+    while s:waiting_compl_menu && nwait < 100
+        let nwait += 1
+        sleep 10m
+    endwhile
+    if exists('s:compl_menu')
         let s:is_completing = 1
-        return argls
+        if has('nvim-0.5.0') || has('patch-8.2.84')
+            return s:compl_menu
+        elseif has('nvim-0.4.3') || has('patch-8.1.1705')
+            " They have float window, but 'user_data' must be string
+            let s:user_data = {}
+            for item in s:compl_menu
+                let wrd = item['word']
+                let s:user_data[wrd] = deepcopy(item['user_data'])
+                let item['user_data'] = ''
+            endfor
+        else
+            " No support for float window: use the old preview window
+            for item in s:compl_menu
+                let wrd = item['word']
+                if item['user_data']['cls'] == 'a'
+                    let item['info'] = item['user_data']['argument']
+                elseif item['user_data']['cls'] == 'f'
+                    let usage = item['user_data']['usage']
+                    call map(usage, 'join(v:val, " = ")')
+                    let usage = wrd . '(' . join(usage, ", ") . ')'
+                    let item['info'] = FormatTxt('Description: ' . item['user_data']['descr'], ' ' , "\n ", winwidth(0)) .
+                                \ "\n" . FormatTxt('Usage: ' . usage . "\t", ' ' , "\n  ", winwidth(0))
+                endif
+                let item['user_data'] = ''
+            endfor
+        endif
+        return s:compl_menu
     endif
 endfunction
 
@@ -3507,6 +3827,10 @@ function RSourceOtherScripts()
                 exe "source " . escape(fl, ' \')
             endif
         endfor
+    endif
+
+    if (g:R_auto_start == 1 && v:vim_did_enter == 0) || g:R_auto_start == 2
+        call timer_start(200, 'AutoStartR')
     endif
 endfunction
 
@@ -3528,12 +3852,28 @@ function ShowRDebugInfo()
     endfor
 endfunction
 
-command -nargs=1 -complete=customlist,RLisObjs Rinsert :call RInsert(<q-args>, "default")
+function AutoStartR(...)
+    if string(g:SendCmdToR) != "function('SendCmdToR_fake')"
+        return
+    endif
+    if v:vim_did_enter == 0
+        call timer_start(100, 'AutoStartR')
+        return
+    endif
+    if exists('s:starting_ncs') && s:starting_ncs == 1
+        call timer_start(200, 'AutoStartR')
+        return
+    endif
+    call StartR("R")
+endfunction
+
+command -nargs=1 -complete=customlist,RLisObjs Rinsert :call RInsert(<q-args>, "here")
 command -range=% Rformat <line1>,<line2>:call RFormatCode()
 command RBuildTags :call RBuildTags()
 command -nargs=? -complete=customlist,RLisObjs Rhelp :call RAskHelp(<q-args>)
 command -nargs=? -complete=dir RSourceDir :call RSourceDirectory(<q-args>)
-command RStop :call StopR()
+command RStop :call SignalToR('SIGINT')
+command RKill :call SignalToR('SIGKILL')
 command -nargs=? RSend :call g:SendCmdToR(<q-args>)
 command RDebugInfo :call ShowRDebugInfo()
 
@@ -3567,6 +3907,8 @@ else
             else
                 let g:rplugin.tmpdir = $TMPDIR . "/Nvim-R-" . g:rplugin.userlogin
             endif
+        elseif isdirectory("/dev/shm")
+            let g:rplugin.tmpdir = "/dev/shm/Nvim-R-" . g:rplugin.userlogin
         elseif isdirectory("/tmp")
             let g:rplugin.tmpdir = "/tmp/Nvim-R-" . g:rplugin.userlogin
         else
@@ -3585,9 +3927,9 @@ endif
 
 " Make the file name of files to be sourced
 if exists("g:R_remote_tmpdir")
-	let s:Rsource_read = g:R_remote_tmpdir . "/Rsource-" . getpid()
+    let s:Rsource_read = g:R_remote_tmpdir . "/Rsource-" . getpid()
 else
-	let s:Rsource_read = g:rplugin.tmpdir . "/Rsource-" . getpid()
+    let s:Rsource_read = g:rplugin.tmpdir . "/Rsource-" . getpid()
 endif
 let s:Rsource_write = g:rplugin.tmpdir . "/Rsource-" . getpid()
 
@@ -3596,7 +3938,6 @@ let g:rplugin.is_darwin = system("uname") =~ "Darwin"
 
 " Variables whose default value is fixed
 let g:R_allnames          = get(g:, "R_allnames",           0)
-let g:R_complete          = get(g:, "R_complete",           1)
 let g:R_rmhidden          = get(g:, "R_rmhidden",           0)
 let g:R_assign            = get(g:, "R_assign",             1)
 let g:R_assign_map        = get(g:, "R_assign_map",       "_")
@@ -3606,8 +3947,9 @@ let g:R_synctex           = get(g:, "R_synctex",            1)
 let g:R_non_r_compl       = get(g:, "R_non_r_compl",        1)
 let g:R_nvim_wd           = get(g:, "R_nvim_wd",            0)
 let g:R_commented_lines   = get(g:, "R_commented_lines",    0)
-let g:R_after_start       = get(g:, "R_after_start",       "")
-let g:R_csv_warn          = get(g:, "R_csv_warn",           1)
+let g:R_auto_start        = get(g:, "R_auto_start",         0)
+let g:R_after_start       = get(g:, "R_after_start",       [])
+let g:R_after_ob_open     = get(g:, "R_after_ob_open",     [])
 let g:R_min_editor_width  = get(g:, "R_min_editor_width",  80)
 let g:R_rconsole_width    = get(g:, "R_rconsole_width",    80)
 let g:R_rconsole_height   = get(g:, "R_rconsole_height",   15)
@@ -3622,29 +3964,32 @@ let g:R_objbr_h           = get(g:, "R_objbr_h",           10)
 let g:R_objbr_opendf      = get(g:, "R_objbr_opendf",       1)
 let g:R_objbr_openlist    = get(g:, "R_objbr_openlist",     0)
 let g:R_objbr_allnames    = get(g:, "R_objbr_allnames",     0)
-let g:R_objbr_labelerr    = get(g:, "R_objbr_labelerr",     1)
 let g:R_applescript       = get(g:, "R_applescript",        0)
 let g:R_esc_term          = get(g:, "R_esc_term",           1)
 let g:R_close_term        = get(g:, "R_close_term",         1)
+let g:R_buffer_opts       = get(g:, "R_buffer_opts", "winfixwidth nobuflisted")
+let g:R_debug             = get(g:, "R_debug",              1)
 let g:R_wait              = get(g:, "R_wait",              60)
 let g:R_wait_reply        = get(g:, "R_wait_reply",         2)
-let g:R_show_args         = get(g:, "R_show_args",          1)
-let g:R_show_arg_help     = get(g:, "R_show_arg_help",      1)
 let g:R_never_unmake_menu = get(g:, "R_never_unmake_menu",  0)
 let g:R_insert_mode_cmds  = get(g:, "R_insert_mode_cmds",   0)
-let g:R_in_buffer         = get(g:, "R_in_buffer",          1)
+let g:R_disable_cmds      = get(g:, "R_disable_cmds",    [''])
 let g:R_open_example      = get(g:, "R_open_example",       1)
 let g:R_openhtml          = get(g:, "R_openhtml",           1)
 let g:R_hi_fun            = get(g:, "R_hi_fun",             1)
 let g:R_hi_fun_paren      = get(g:, "R_hi_fun_paren",       0)
 let g:R_hi_fun_globenv    = get(g:, "R_hi_fun_globenv",     0)
-let g:R_ls_env_tol        = get(g:, "R_ls_env_tol",       500)
-let g:R_args_in_stline    = get(g:, "R_args_in_stline",     0)
 let g:R_bracketed_paste   = get(g:, "R_bracketed_paste",    0)
-let g:R_sttline_fmt       = get(g:, "R_sttline_fmt", "%fun(%args)")
-if !exists(":terminal")
-    let g:R_in_buffer = 0
+let g:R_clear_console     = get(g:, "R_clear_console",      1)
+
+if exists(":terminal") != 2
+    let g:R_external_term = get(g:, "R_external_term", 1)
 endif
+if !has("nvim") && !exists("*term_start")
+    " exists(':terminal') return 2 even when Vim does not have the +terminal feature
+    let g:R_external_term = get(g:, "R_external_term", 1)
+endif
+let g:R_external_term = get(g:, "R_external_term", 0)
 
 let s:editing_mode = "emacs"
 if filereadable(expand("~/.inputrc"))
@@ -3659,14 +4004,14 @@ endif
 let g:R_editing_mode = get(g:, "R_editing_mode", s:editing_mode)
 unlet s:editing_mode
 
-if has('win32') && !g:R_in_buffer
+if has('win32') && !(type(g:R_external_term) == v:t_number && g:R_external_term == 0)
     " Sending multiple lines at once to Rgui on Windows does not work.
     let g:R_parenblock = get(g:, 'R_parenblock',         0)
 else
     let g:R_parenblock = get(g:, 'R_parenblock',         1)
 endif
 
-if g:R_in_buffer
+if type(g:R_external_term) == v:t_number && g:R_external_term == 0
     let g:R_nvimpager = get(g:, 'R_nvimpager', 'vertical')
 else
     let g:R_nvimpager = get(g:, 'R_nvimpager', 'tab')
@@ -3679,11 +4024,6 @@ let g:R_latexcmd         = get(g:, "R_latexcmd",          ["default"])
 let g:R_texerr           = get(g:, "R_texerr",                      1)
 let g:R_rmd_environment  = get(g:, "R_rmd_environment",  ".GlobalEnv")
 let g:R_indent_commented = get(g:, "R_indent_commented",            1)
-
-if g:R_complete != 1 && g:R_complete != 2
-    let R_complete = 1
-    call RWarningMsg("Valid values for 'R_complete' are 1 and 2. Please, fix your vimrc.")
-endif
 
 if g:rplugin.is_darwin
     let g:R_openpdf = get(g:, "R_openpdf", 1)
@@ -3710,7 +4050,7 @@ else
     let g:R_rcomment_string = get(g:, "R_rcomment_string", "# ")
 endif
 
-if g:R_in_buffer
+if type(g:R_external_term) == v:t_number && g:R_external_term == 0
     let g:R_save_win_pos = 0
     let g:R_arrange_windows  = 0
 endif
@@ -3720,10 +4060,6 @@ if has("win32")
 else
     let g:R_save_win_pos    = get(g:, "R_save_win_pos",    0)
     let g:R_arrange_windows = get(g:, "R_arrange_windows", 0)
-endif
-
-if g:R_hi_fun == 0 || (exists("g:r_syntax_fun_pattern") && g:r_syntax_fun_pattern == 1)
-    let g:R_hi_fun_globenv = 0
 endif
 
 " Look for invalid options
@@ -3770,9 +4106,6 @@ endif
 
 " ========================================================================
 
-" Start with an empty list of objects in the workspace
-let s:globalenv_lines = []
-
 " Minimum width for the Object Browser
 if g:R_objbr_w < 10
     let g:R_objbr_w = 10
@@ -3810,13 +4143,7 @@ function RCompleteSyntax()
     if &previewwindow && s:is_completing
         let s:is_completing = 0
         set encoding=utf-8
-        syntax clear
-        exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/syntax/rdoc.vim"
-        syn match rdocArg2 "^\s*\([A-Z]\|[a-z]\|[0-9]\|\.\|_\)\{-}\ze:"
-        syn match rdocTitle2 '^Description: '
-        syn region rdocUsage matchgroup=rdocTitle start="^Usage: " matchgroup=NONE end='\t$' contains=@rdocR
-        hi def link rdocArg2 Special
-        hi def link rdocTitle2 Title
+        set syntax=rdocpreview
     endif
 endfunction
 if &completeopt =~ "preview"
@@ -3834,10 +4161,19 @@ let s:R_pid = 0
 let g:rplugin.myport = 0
 let g:rplugin.nvimcom_port = 0
 
+" Current view of the object browser: .GlobalEnv X loaded libraries
+let g:rplugin.curview = "None"
+
 let s:filelines = readfile(g:rplugin.home . "/R/nvimcom/DESCRIPTION")
 let s:required_nvimcom = substitute(s:filelines[1], "Version: ", "", "")
 let s:required_nvimcom_dot = substitute(s:required_nvimcom, "-", ".", "")
 unlet s:filelines
+
+if has("nvim")
+    exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/R/nvimrcom.vim"
+else
+    exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/R/vimrcom.vim"
+endif
 
 let s:nvimcom_version = "0"
 let s:nvimcom_home = ""
@@ -3867,12 +4203,6 @@ if exists("g:R_nvimcom_home")
     let s:nvimcom_home = g:R_nvimcom_home
 endif
 
-if has("nvim")
-    exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/R/nvimrcom.vim"
-else
-    exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/R/vimrcom.vim"
-endif
-
 " SyncTeX options
 let g:rplugin.has_wmctrl = 0
 
@@ -3894,7 +4224,7 @@ if exists("g:R_app")
     endif
 else
     if has("win32")
-        if g:R_in_buffer
+        if type(g:R_external_term) == v:t_number && g:R_external_term == 0
             let g:rplugin.R = "Rterm.exe"
         else
             let g:rplugin.R = "Rgui.exe"
@@ -3911,26 +4241,9 @@ else
     let g:rplugin.Rcmd = "R"
 endif
 
-" Add R directory to the $PATH
-if exists("g:R_path")
-    let g:rplugin.R_path = expand(g:R_path)
-    if !isdirectory(g:rplugin.R_path)
-        call RWarningMsg('"' . g:R_path . '" is not a directory. Fix the value of R_path in your vimrc.')
-        let g:rplugin.failed = 1
-        finish
-    endif
-    if $PATH !~ g:rplugin.R_path
-        if has("win32")
-            let $PATH = g:rplugin.R_path . ';' . $PATH
-        else
-            let $PATH = g:rplugin.R_path . ':' . $PATH
-        endif
-    endif
-    if !executable(g:rplugin.R)
-        call RWarningMsg('"' . g:rplugin.R . '" not found. Fix the value of either R_path or R_app in your vimrc.')
-        let g:rplugin.failed = 1
-        finish
-    endif
+if UpdatePathForR() == 0
+    let g:rplugin.failed = 1
+    finish
 endif
 
 if exists("g:RStudio_cmd")
@@ -3945,11 +4258,15 @@ if g:R_applescript
     exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/R/osx.vim"
 endif
 
-if (exists('g:R_source') && g:R_source =~# 'tmux_split.vim') || (!has("win32") && !g:R_applescript && !g:R_in_buffer)
-    exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/R/tmux.vim"
+if !has("win32")
+    if (type(g:R_external_term) == v:t_number && g:R_external_term == 1) ||
+                \ type(g:R_external_term) == v:t_string ||
+                \ (exists('g:R_source') && g:R_source =~# 'tmux_split.vim')
+        exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/R/tmux.vim"
+    endif
 endif
 
-if g:R_in_buffer
+if type(g:R_external_term) == v:t_number && g:R_external_term == 0
     if has("nvim")
         exe "source " . substitute(g:rplugin.home, " ", "\\ ", "g") . "/R/nvimbuffer.vim"
     else
@@ -3963,6 +4280,10 @@ endif
 
 if !executable(g:rplugin.R)
     call RWarningMsg("R executable not found: '" . g:rplugin.R . "'")
+endif
+
+if CheckNvimcomVersion(0)
+    call StartNClientServer("Before_R")
 endif
 
 " Check if r-plugin/functions.vim exist
@@ -4007,11 +4328,6 @@ if len(g:R_latexcmd[0]) == 1
     call RWarningMsg("The option R_latexcmd should be a list. Please update your vimrc.")
 endif
 
-" 2017-12-06
-if exists("g:R_term") && g:R_term == "terminator"
-    call RWarningMsg('"terminator" is no longer supported. Please, choose another value for R_term.')
-endif
-
 " 2017-12-14
 if hasmapto("<Plug>RCompleteArgs", "i")
     call RWarningMsg("<Plug>RCompleteArgs no longer exists. Please, delete it from your vimrc.")
@@ -4032,4 +4348,18 @@ endif
 " 2018-03-31
 if exists('g:R_tmux_split')
     call RWarningMsg('The option R_tmux_split no longer exists. Please see https://github.com/jalvesaq/Nvim-R/blob/master/R/tmux_split.md')
+endif
+
+" 2020-05-18
+if exists('g:R_complete')
+    call RWarningMsg("The option 'R_complete' no longer exists.")
+endif
+if exists('R_args_in_stline')
+    call RWarningMsg("The option 'R_args_in_stline' no longer exists.")
+endif
+if exists('R_sttline_fmt')
+    call RWarningMsg("The option 'R_sttline_fmt' no longer exists.")
+endif
+if exists('R_show_args')
+    call RWarningMsg("The option 'R_show_args' no longer exists.")
 endif

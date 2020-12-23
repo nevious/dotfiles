@@ -122,8 +122,6 @@ if has("gui_running")
     call MakeRMenu()
 endif
 
-call RSourceOtherScripts()
-
 function! RDocExSection()
     let ii = search("^Examples:$", "nW")
     if ii == 0
@@ -138,6 +136,7 @@ nnoremap <buffer><silent> ge :call RDocExSection()<CR>
 nnoremap <buffer><silent> q :q<CR>
 
 setlocal bufhidden=wipe
+setlocal nonumber
 setlocal noswapfile
 set buftype=nofile
 autocmd VimResized <buffer> let g:R_newsize = 1

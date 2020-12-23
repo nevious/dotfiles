@@ -37,7 +37,6 @@ endif
 let g:rplugin.debug_lists = []
 let g:rplugin.loaded_libs = []
 let s:Rhelp_list = []
-let g:rplugin_omni_lines = []
 
 " For compatibility with ncm-R:
 let g:rplugin_loaded_libs = g:rplugin.loaded_libs
@@ -122,15 +121,13 @@ function AddToRLibList(lib)
         if len(omf) == 1
             let g:rplugin.loaded_libs += [a:lib]
 
-            " List of objects for omni completion
+            " List of objects
             let olist = readfile(omf[0])
 
             " Library setwidth has no functions
             if len(olist) == 0 || (len(olist) == 1 && len(olist[0]) < 3)
                 return
             endif
-
-            let g:rplugin_omni_lines += olist
 
             " List of objects for :Rhelp completion
             for xx in olist
@@ -175,19 +172,19 @@ function FillRLibList()
                 call AddToRLibList(lib)
             endif
         endfor
-        call delete(g:rplugin.tmpdir . "/libnames_" . $NVIMR_ID)
     endif
-    " Now we need to update the syntax in all R files. There should be a
-    " better solution than setting a flag to let other buffers know that they
-    " also need to update the syntax on CursorMoved event:
-    " https://github.com/neovim/neovim/issues/901
     if !exists("g:R_hi_fun") || g:R_hi_fun != 0
-        let s:new_libs = len(g:rplugin.loaded_libs)
-        silent exe 'set syntax=' . &syntax
-        redraw
+        if exists("*nvim_buf_set_option")
+            for bId in nvim_list_bufs()
+                call nvim_buf_set_option(bId, "syntax", nvim_buf_get_option(bId, "syntax"))
+            endfor
+        else
+            let s:new_libs = len(g:rplugin.loaded_libs)
+            silent exe 'set syntax=' . &syntax
+            redraw
+        endif
     endif
     let b:rplugin_new_libs = s:new_libs
-    call CheckRGlobalEnv()
 endfunction
 
 

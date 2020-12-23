@@ -15,8 +15,13 @@ function SendCmdToR_Buffer(...)
         endif
 
         " Update the width, if necessary
-        if g:R_setwidth != 0 && g:R_setwidth != 2
-            let rwnwdth = winwidth(g:rplugin.R_winnr)
+        try
+            let bwid = bufwinid(g:rplugin.R_bufname)
+        catch /.*/
+            let bwid = -1
+        endtry
+        if g:R_setwidth != 0 && g:R_setwidth != 2 && bwid != -1
+            let rwnwdth = winwidth(bwid)
             if rwnwdth != s:R_width && rwnwdth != -1 && rwnwdth > 10 && rwnwdth < 999
                 let s:R_width = rwnwdth
                 let Rwidth = s:R_width + s:number_col
@@ -26,26 +31,34 @@ function SendCmdToR_Buffer(...)
                     call SendToNvimcom("\x08" . $NVIMR_ID . "options(width=" . Rwidth . ")")
                     sleep 10m
                 endif
-                " Scroll issue in Neovim after R Console window is resized...
             endif
         endif
 
         if g:R_auto_scroll && cmd !~ '^quit('
-            let sbopt = &switchbuf
-            set switchbuf=useopen,usetab
-            let curtab = tabpagenr()
-            let isnormal = mode() ==# 'n'
-            let curwin = winnr()
-            exe 'sb ' . g:rplugin.R_bufname
-            call cursor('$', 1)
-            if tabpagenr() != curtab
-                exe 'normal! ' . curtab . 'gt'
+            if exists("*nvim_win_set_cursor")
+                " These functions exist only in Neovim >= 0.4.0:
+                if bwid != -1
+                    call nvim_win_set_cursor(bwid, [nvim_buf_line_count(nvim_win_get_buf(bwid)), 0])
+                endif
+            else
+                " TODO: Delete this code and update the documentation when
+                " everyone is using Neovim >= 0.4.0 (released on 2019-04-08)
+                let sbopt = &switchbuf
+                set switchbuf=useopen,usetab
+                let curtab = tabpagenr()
+                let isnormal = mode() ==# 'n'
+                let curwin = winnr()
+                exe 'sb ' . g:rplugin.R_bufname
+                call cursor('$', 1)
+                if tabpagenr() != curtab
+                    exe 'normal! ' . curtab . 'gt'
+                endif
+                exe curwin . 'wincmd w'
+                if isnormal
+                    stopinsert
+                endif
+                exe 'set switchbuf=' . sbopt
             endif
-            exe curwin . 'wincmd w'
-            if isnormal
-                stopinsert
-            endif
-            exe 'set switchbuf=' . sbopt
         endif
 
         if !(a:0 == 2 && a:2 == 0)
@@ -63,27 +76,22 @@ function SendCmdToR_Buffer(...)
     endif
 endfunction
 
-function OnTermClose()
+function CloseRTerm()
     if exists("g:rplugin.R_bufname")
-        if g:rplugin.R_bufname == bufname("%")
-            if g:R_close_term
-                if g:R_clear_line
-                    call feedkeys('a ')
-                else
-                    call feedkeys(' ')
-                endif
+        try
+            " R migh have been killed by closing the terminal buffer with the :q command
+            exe "sbuffer " . g:rplugin.R_bufname
+        catch /E94/
+        endtry
+        if g:R_close_term && g:rplugin.R_bufname == bufname("%")
+            startinsert
+            if g:R_clear_line
+                call feedkeys('a ')
+            else
+                call feedkeys(' ')
             endif
         endif
         unlet g:rplugin.R_bufname
-    endif
-
-    " Set nvimcom port to 0 in nclientserver
-    if g:rplugin.jobs["ClientServer"]
-        if exists('*chansend')
-            call chansend(g:rplugin.jobs["ClientServer"], "\001R0\n")
-        else
-            call jobsend(g:rplugin.jobs["ClientServer"], "\001R0\n")
-        endif
     endif
 endfunction
 
@@ -121,7 +129,6 @@ function StartR_InBuffer()
         call UnsetRHome()
     endif
     let g:rplugin.R_bufname = bufname("%")
-    let g:rplugin.R_winnr = win_getid()
     let s:R_width = 0
     if &number
         if g:R_setwidth < 0 && g:R_setwidth > -17
@@ -139,9 +146,9 @@ function StartR_InBuffer()
     if g:R_esc_term
         tnoremap <buffer> <Esc> <C-\><C-n>
     endif
-    autocmd TermClose <buffer> call OnTermClose()
-    set winfixwidth
-    set nobuflisted
+    for optn in split(g:R_buffer_opts)
+        exe 'setlocal ' . optn
+    endfor
     " Set b:pdf_is_open to avoid error when the user has to go to R Console to
     " deal with latex errors while compiling the pdf
     let b:pdf_is_open = 1

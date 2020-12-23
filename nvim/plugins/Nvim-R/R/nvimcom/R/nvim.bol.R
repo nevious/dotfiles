@@ -63,58 +63,68 @@ nvim.omni.line <- function(x, envir, printenv, curlevel, maxlevel = 0, spath = F
     }
 
     if(is.null(xx)){
-        x.group <- " "
-        x.class <- "unknown"
+        x.class <- ""
+        x.group <- "*"
     } else {
         if(x == "break" || x == "next" || x == "for" || x == "if" || x == "repeat" || x == "while"){
-            x.group <- "flow-control"
+            x.group <- ";"
             x.class <- "flow-control"
         } else {
-            if(is.function(xx)) x.group <- "function"
-            else if(is.numeric(xx)) x.group <- "numeric"
-            else if(is.factor(xx)) x.group <- "factor"
-            else if(is.character(xx)) x.group <- "character"
-            else if(is.logical(xx)) x.group <- "logical"
-            else if(is.data.frame(xx)) x.group <- "data.frame"
-            else if(is.list(xx)) x.group <- "list"
-            else if(is.environment(xx)) x.group <- "env"
-            else x.group <- " "
             x.class <- class(xx)[1]
+            if(is.function(xx)) x.group <- "f"
+            else if(is.numeric(xx)) x.group <- "{"
+            else if(is.factor(xx)) x.group <- "!"
+            else if(is.character(xx)) x.group <- "~"
+            else if(is.logical(xx)) x.group <- "%"
+            else if(is.data.frame(xx)) x.group <- "$"
+            else if(is.list(xx)) x.group <- "["
+            else if(is.environment(xx)) x.group <- ":"
+            else x.group <- "*"
         }
     }
 
     if(curlevel == maxlevel || maxlevel == 0){
-        if(x.group == "function"){
+        if(x.group == "f"){
             if(curlevel == 0){
                 if(nvim.grepl("GlobalEnv", printenv)){
-                    cat(x, "\x06function\x06function\x06", printenv, "\x06",
-                        nvim.args(x, txt = "", spath = spath), "\n", sep = "")
+                    cat(x, "\006\003\006\006", printenv, "\006",
+                        nvim.args(x, spath = spath), "\n", sep = "")
                 } else {
-                    info <- ""
+                    info <- "\006\006"
                     try(info <- NvimcomEnv$pkgdescr[[printenv]]$descr[[NvimcomEnv$pkgdescr[[printenv]]$alias[[x]]]],
                         silent = TRUE)
-                    cat(x, "\x06function\x06function\x06", printenv, "\x06",
-                        nvim.args(x, txt = "", pkg = printenv, spath = spath), info, "\n", sep = "")
+                    cat(x, "\006\003\006\006", printenv, "\006",
+                        nvim.args(x, pkg = printenv, spath = spath), info, "\006\n", sep = "")
                 }
             } else {
                 # some libraries have functions as list elements
-                cat(x, "\x06function\x06function\x06", printenv, "\x06Unknown arguments", "\n", sep="")
+                cat(x, "\006\003\006\006", printenv, "\006Unknown arguments\006\006\006\n", sep="")
             }
         } else {
             if(is.list(xx) || is.environment(xx)){
                 if(curlevel == 0){
-                    info <- ""
+                    info <- "\006\006"
                     try(info <- NvimcomEnv$pkgdescr[[printenv]]$descr[[NvimcomEnv$pkgdescr[[printenv]]$alias[[x]]]],
                         silent = TRUE)
-                    cat(x, "\x06", x.class, "\x06", x.group, "\x06", printenv, "\x06Not a function", info, "\n", sep="")
+                    if(is.data.frame(xx))
+                        cat(x, "\006", x.group, "\006", x.class, "\006", printenv, "\006[", nrow(xx), ", ", ncol(xx), "]", info, "\006\n", sep="")
+                    else if(is.list(xx))
+                        cat(x, "\006", x.group, "\006", x.class, "\006", printenv, "\006", length(xx), info, "\006\n", sep="")
+                    else
+                        cat(x, "\006", x.group, "\006", x.class, "\006", printenv, "\006[]", info, "\006\n", sep="")
                 } else {
-                    cat(x, "\x06", x.class, "\x06", " ", "\x06", printenv, "\x06Not a function", "\n", sep="")
+                    cat(x, "\006", x.group, "\006", x.class, "\006", printenv, "\006[]\006\006\006\n", sep="")
                 }
             } else {
                 info <- ""
                 try(info <- NvimcomEnv$pkgdescr[[printenv]]$descr[[NvimcomEnv$pkgdescr[[printenv]]$alias[[x]]]],
                         silent = TRUE)
-                cat(x, "\x06", x.class, "\x06", x.group, "\x06", printenv, "\x06Not a function", info, "\n", sep="")
+                if(!length(info) || info == ""){
+                    xattr <- try(attr(xx, "label"), silent = TRUE)
+                    if(!inherits(xattr, "try-error"))
+                        info <- paste0("\006\006", xattr)
+                }
+                cat(x, "\006", x.group, "\006", x.class, "\006", printenv, "\006[]", info, "\006\n", sep="")
             }
         }
     }
@@ -154,7 +164,7 @@ CleanOmniLineASCII <- function(x)
     x <- gsub("\\\\bold\\{(.+?)\\}", "\\1", x)
     x <- gsub("\\\\pkg\\{(.+?)\\}", "\\1", x)
     x <- gsub("\\\\item\\{(.+?)\\}", "\\1", x)
-    x <- gsub("\\\\item ", "\\\\N  - ", x)
+    x <- gsub("\\\\item ", " - ", x)
     x <- gsub("\\\\itemize\\{(.+?)\\}", "\\1", x)
     x <- gsub("\\\\eqn\\{.+?\\}\\{(.+?)\\}", "\\1", x)
     x <- gsub("\\\\eqn\\{(.+?)\\}", "\\1", x)
@@ -166,7 +176,7 @@ CleanOmniLineASCII <- function(x)
     x <- gsub("\\\\ifelse\\{\\{latex\\}\\{\\\\out\\{.\\}\\}\\{ \\}\\}\\{\\}", " ", x) # \sspace
     x <- gsub("\\\\ldots", "...", x)
     x <- gsub("\\\\dots", "...", x)
-    x <- gsub("\\\\preformatted\\{(.+?)\\}", "\\\\N\\1\\\\N", x)
+    x <- gsub("\\\\preformatted\\{(.+?)\\}", " \\1 ", x)
     x
 }
 
@@ -184,7 +194,7 @@ CleanOmniLineUTF8 <- function(x)
     x <- gsub("\\\\bold\\{(.+?)\\}", "\\1", x)
     x <- gsub("\\\\pkg\\{(.+?)\\}", "\\1", x)
     x <- gsub("\\\\item\\{(.+?)\\}", "\\1", x)
-    x <- gsub("\\\\item ", "\\\\N  \u2022 ", x)
+    x <- gsub("\\\\item ", " \u2022 ", x)
     x <- gsub("\\\\itemize\\{(.+?)\\}", "\\1", x)
     x <- gsub("\\\\eqn\\{.+?\\}\\{(.+?)\\}", "\\1", x)
     x <- gsub("\\\\eqn\\{(.+?)\\}", "\\1", x)
@@ -196,11 +206,11 @@ CleanOmniLineUTF8 <- function(x)
     x <- gsub("\\\\ifelse\\{\\{latex\\}\\{\\\\out\\{.\\}\\}\\{ \\}\\}\\{\\}", " ", x) # \sspace
     x <- gsub("\\\\ldots", "...", x)
     x <- gsub("\\\\dots", "...", x)
-    x <- gsub("\\\\preformatted\\{(.+?)\\}", "\\\\N\\1\\\\N", x)
+    x <- gsub("\\\\preformatted\\{(.+?)\\}", " \\1 ", x)
     x
 }
 
-if(!is.na(localeToCharset()) && localeToCharset()[1] == "UTF-8" && version$os != "cygwin"){
+if(!is.na(localeToCharset()[1]) && localeToCharset()[1] == "UTF-8" && version$os != "cygwin"){
     CleanOmniLine <- CleanOmniLineUTF8
 } else {
     CleanOmniLine <- CleanOmniLineASCII
@@ -218,7 +228,7 @@ GetFunDescription <- function(pkg)
     if(!file.exists(idx) || !file.info(idx)$size)
         return(NULL)
 
-    tab <- read.table(idx, sep = "\t", quote = "", stringsAsFactors = FALSE)
+    tab <- read.table(idx, sep = "\t", comment.char = "", quote = "", stringsAsFactors = FALSE)
     als <- tab$V2
     names(als) <- tab$V1
 
@@ -230,7 +240,7 @@ GetFunDescription <- function(pkg)
     {
         x <- paste0(x, collapse = "")
         ttl <- sub(".*\\\\title\\{\\s*", "", x)
-        ttl <- sub("\n", " ", ttl)
+        ttl <- gsub("\n", " ", ttl)
         ttl <- gsub("  +", " ", ttl)
         ttl <- CleanOmniLine(ttl)
         ttl <- sub("\\s*\\}.*", "", ttl)
@@ -256,8 +266,8 @@ GetFunDescription <- function(pkg)
         }
 
         x <- sub("^\\s*", "", sub("\\s*$", "", x))
-        x <- gsub("\n\\s*", "\\\\N", x)
-        x <- paste0("\x08", ttl, "\x05", x)
+        x <- gsub("\n\\s*", " ", x)
+        x <- paste0("\006", ttl, "\006", x)
         x
     }
     NvimcomEnv$pkgdescr[[pkg]] <- list("descr" = sapply(pkgInfo, GetDescr),
@@ -271,42 +281,14 @@ CleanOmnils <- function(f)
     writeLines(x, f)
 }
 
-
 # Build Omni List
-nvim.bol <- function(omnilist, packlist, allnames = FALSE, pattern = "", sendmsg = 1) {
+nvim.bol <- function(omnilist, packlist, allnames = FALSE) {
     nvim.OutDec <- getOption("OutDec")
     on.exit(options(nvim.OutDec))
     options(OutDec = ".")
 
     if(!missing(packlist) && is.null(NvimcomEnv$pkgdescr[[packlist]]))
         GetFunDescription(packlist)
-
-    if(omnilist == ".GlobalEnv"){
-        sink(paste0(Sys.getenv("NVIMR_TMPDIR"), "/GlobalEnvList_", Sys.getenv("NVIMR_ID")), append = FALSE)
-        for(env in search()){
-            if(grepl("^package:", env) == FALSE){
-                obj.list <- objects(env, all.names = allnames)
-                l <- length(obj.list)
-                maxlevel <- nchar(pattern) - nchar(gsub("@", "", gsub("\\$", "", pattern)))
-                pattern <- sub("\\$.*", "", pattern)
-                pattern <- sub("@.*", "", pattern)
-                if(l > 0)
-                    for(obj in obj.list)
-                        if(length(grep(paste0("^", pattern), obj)) > 0)
-                            nvim.omni.line(obj, env, env, 0, maxlevel, spath = TRUE)
-            }
-        }
-        sink()
-        writeLines(text = paste(obj.list, collapse = "\n"),
-                   con = paste(Sys.getenv("NVIMR_TMPDIR"), "/nvimbol_finished", sep = ""))
-        flush(stdout())
-        if(sendmsg == 1){
-            .C("nvimcom_msg_to_nvim", "FinishBuildROmniList()", PACKAGE = "nvimcom")
-        } else if(sendmsg == 2){
-            .C("nvimcom_msg_to_nvim", "CheckRGlobalEnv()", PACKAGE = "nvimcom")
-        }
-        return(invisible(NULL))
-    }
 
     if(getOption("nvimcom.verbose") > 3)
         cat("Building files with lists of objects in loaded packages for",
@@ -337,9 +319,9 @@ nvim.bol <- function(omnilist, packlist, allnames = FALSE, pattern = "", sendmsg
         else
             pack_descriptions <- character()
         pack_descriptions <- c(paste(curlib,
-                           gsub("[\t\n ]+", " ", packageDescription(curlib)$Title),
-                           gsub("[\t\n ]+", " ", packageDescription(curlib)$Description),
-                           sep = "\x09"), pack_descriptions)
+                           gsub("[\t\n\r ]+", " ", packageDescription(curlib)$Title),
+                           gsub("[\t\n\r ]+", " ", packageDescription(curlib)$Description),
+                           sep = "\t"), pack_descriptions)
         pack_descriptions <- sort(pack_descriptions[!duplicated(pack_descriptions)])
         writeLines(pack_descriptions,
                    paste0(Sys.getenv("NVIMR_COMPLDIR"), "/pack_descriptions"))
@@ -358,8 +340,8 @@ nvim.bol <- function(omnilist, packlist, allnames = FALSE, pattern = "", sendmsg
             CleanOmnils(omnilist)
             # Build list of functions for syntax highlight
             fl <- readLines(omnilist)
-            fl <- fl[grep("\x06function\x06function", fl)]
-            fl <- sub("\x06.*", "", fl)
+            fl <- fl[grep("\006\003\006", fl)]
+            fl <- sub("\006.*", "", fl)
             fl <- fl[!grepl("[<%\\[\\+\\*&=\\$:{|@\\(\\^>/~!]", fl)]
             fl <- fl[!grepl("-", fl)]
             if(curlib == "base"){

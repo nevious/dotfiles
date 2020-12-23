@@ -1,7 +1,7 @@
 import pydoc
 
-from jedi.evaluate.utils import ignored
-from jedi.evaluate.filters import AbstractNameDefinition
+from jedi.inference.utils import ignored
+from jedi.inference.names import AbstractArbitraryName
 
 try:
     from pydoc_data import topics as pydoc_topics
@@ -15,40 +15,11 @@ except ImportError:
         pydoc_topics = None
 
 
-def get_operator(evaluator, string, pos):
-    return Keyword(evaluator, string, pos)
-
-
-class KeywordName(AbstractNameDefinition):
+class KeywordName(AbstractArbitraryName):
     api_type = u'keyword'
 
-    def __init__(self, evaluator, name):
-        self.evaluator = evaluator
-        self.string_name = name
-        self.parent_context = evaluator.builtins_module
-
-    def infer(self):
-        return [Keyword(self.evaluator, self.string_name, (0, 0))]
-
-
-class Keyword(object):
-    api_type = u'keyword'
-
-    def __init__(self, evaluator, name, pos):
-        self.name = KeywordName(evaluator, name)
-        self.start_pos = pos
-        self.parent = evaluator.builtins_module
-
-    @property
-    def names(self):
-        """ For a `parsing.Name` like comparision """
-        return [self.name]
-
-    def py__doc__(self, include_call_signature=False):
-        return imitate_pydoc(self.name.string_name)
-
-    def __repr__(self):
-        return '<%s: %s>' % (type(self).__name__, self.name)
+    def py__doc__(self):
+        return imitate_pydoc(self.string_name)
 
 
 def imitate_pydoc(string):
@@ -68,7 +39,9 @@ def imitate_pydoc(string):
         string = h.symbols[string]
         string, _, related = string.partition(' ')
 
-    get_target = lambda s: h.topics.get(s, h.keywords.get(s))
+    def get_target(s):
+        return h.topics.get(s, h.keywords.get(s))
+
     while isinstance(string, str):
         string = get_target(string)
 

@@ -19,14 +19,6 @@ def build_nested(code, depth, base='def f():\n'):
 FAILING_EXAMPLES = [
     '1 +',
     '?',
-    # Python/compile.c
-    dedent('''\
-        for a in [1]:
-            try:
-                pass
-            finally:
-                continue
-        '''), # 'continue' not supported inside 'finally' clause"
     'continue',
     'break',
     'return',
@@ -154,7 +146,7 @@ FAILING_EXAMPLES = [
     # Now nested parsing
     "f'{continue}'",
     "f'{1;1}'",
-    "f'{a=3}'",
+    "f'{a;}'",
     "f'{b\"\" \"\"}'",
 ]
 
@@ -259,10 +251,6 @@ GLOBAL_NONLOCAL_ERROR = [
 
 if sys.version_info >= (3, 6):
     FAILING_EXAMPLES += GLOBAL_NONLOCAL_ERROR
-    FAILING_EXAMPLES += [
-        # Raises multiple errors in previous versions.
-        'async def foo():\n def nofoo():[x async for x in []]',
-    ]
 if sys.version_info >= (3, 5):
     FAILING_EXAMPLES += [
         # Raises different errors so just ignore them for now.
@@ -293,11 +281,11 @@ if sys.version_info >= (3, 6):
         # Same as above, but for f-strings.
         'f"s" b""',
         'b"s" f""',
+
+        # f-string expression part cannot include a backslash
+        r'''f"{'\n'}"''',
     ]
-if sys.version_info >= (2, 7):
-    # This is something that raises a different error in 2.6 than in the other
-    # versions. Just skip it for 2.6.
-    FAILING_EXAMPLES.append('[a, 1] += 3')
+FAILING_EXAMPLES.append('[a, 1] += 3')
 
 if sys.version_info[:2] == (3, 5):
     # yields are not allowed in 3.5 async functions. Therefore test them
@@ -318,4 +306,58 @@ if sys.version_info[:2] <= (3, 4):
     FAILING_EXAMPLES += [
         'a = *[1], 2',
         '(*[1], 2)',
+    ]
+
+if sys.version_info[:2] < (3, 8):
+    FAILING_EXAMPLES += [
+        # Python/compile.c
+        dedent('''\
+            for a in [1]:
+                try:
+                    pass
+                finally:
+                    continue
+            '''),  # 'continue' not supported inside 'finally' clause"
+    ]
+
+if sys.version_info[:2] >= (3, 8):
+    # assignment expressions from issue#89
+    FAILING_EXAMPLES += [
+        # Case 2
+        '(lambda: x := 1)',
+        '((lambda: x) := 1)',
+        # Case 3
+        '(a[i] := x)',
+        '((a[i]) := x)',
+        '(a(i) := x)',
+        # Case 4
+        '(a.b := c)',
+        '[(i.i:= 0) for ((i), j) in range(5)]',
+        # Case 5
+        '[i:= 0 for i, j in range(5)]',
+        '[(i:= 0) for ((i), j) in range(5)]',
+        '[(i:= 0) for ((i), j), in range(5)]',
+        '[(i:= 0) for ((i), j.i), in range(5)]',
+        '[[(i:= i) for j in range(5)] for i in range(5)]',
+        '[i for i, j in range(5) if True or (i:= 1)]',
+        '[False and (i:= 0) for i, j in range(5)]',
+        # Case 6
+        '[i+1 for i in (i:= range(5))]',
+        '[i+1 for i in (j:= range(5))]',
+        '[i+1 for i in (lambda: (j:= range(5)))()]',
+        # Case 7
+        'class Example:\n [(j := i) for i in range(5)]',
+        # Not in that issue
+        '(await a := x)',
+        '((await a) := x)',
+        # new discoveries
+        '((a, b) := (1, 2))',
+        '([a, b] := [1, 2])',
+        '({a, b} := {1, 2})',
+        '({a: b} := {1: 2})',
+        '(a + b := 1)',
+        '(True := 1)',
+        '(False := 1)',
+        '(None := 1)',
+        '(__debug__ := 1)',
     ]
