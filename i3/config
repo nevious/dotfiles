@@ -196,8 +196,8 @@ exec --no-startup-id nitrogen --restore
 bindsym $mod+y exec i3lock -c "#000000"
 
 # move about in workspaces
-bindsym $mod+c workspace next
-bindsym $mod+x workspace prev
+bindsym $mod+c workspace next_on_output
+bindsym $mod+x workspace prev_on_output
 
 # move workspace
 bindsym $mod+m move workspace to right
