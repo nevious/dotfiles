@@ -78,6 +78,7 @@ Plugin 'MarcWeber/vim-addon-mw-utils'
 Plugin 'tomtom/tlib_vim'
 Plugin 'garbas/vim-snipmate'
 Plugin 'honza/vim-snippets'
+let g:snipMate = { 'snippet_version' : 1 }
 
 " nerdtree
 Plugin 'scrooloose/nerdtree'
@@ -88,10 +89,25 @@ let NERDTreeIgnore = ['\.pyc$', '__pycache__', '__init__.py']
 Plugin 'vimwiki/vimwiki'
 let g:vimwiki_list = [{'path':'~/wiki/vimwiki', 'path_html':'~/wiki/vimwiki_html/', 'syntax': 'markdown', 'ext': '.md'}]
 
+" my make pdf plugin
 Plugin 'nevious/makepdf'
 
 " Colorscheme for gruvbox (includes its own airline theme)
 Plugin 'morhetz/gruvbox'
+
+" ALE linter
+Plugin 'dense-analysis/ale'
+let g:ale_echo_msg_format = '[%linter%] %s [%severity%]'
+let g:ale_sign_error = '✘'
+let g:ale_sign_warning = '⚠'
+let g:ale_lint_on_text_changed = 'never'
+
+" yaml folding
+Plugin 'pedrohdz/vim-yaml-folds'
+set foldlevelstart=20
+
+" ws indentPlugin
+Plugin 'Yggdroot/indentLine'
 
 call vundle#end()
 filetype plugin indent on
@@ -168,3 +184,6 @@ set noexpandtab
 " workaround: https://github.com/neovim/neovim/issues/3786
 autocmd FileType python setlocal tabstop=4 noexpandtab
 
+" make yaml great (not gonna say 'again')
+autocmd BufNewFile,BufReadPost *.{yaml,yml} set filetype=yaml
+autocmd FileType yaml setlocal ts=2 sts=2 sw=2 expandtab
