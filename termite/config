@@ -1,3 +1,6 @@
+[options]
+font = DejaVu Sans mono 9
+
 [colors]
 # Base16 Resesif16
 # Author: Kevin Hamer (hamer.io)
