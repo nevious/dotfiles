@@ -53,8 +53,9 @@ font pango: FontAwesome5Free solid 7, DejaVu Sans Mono 8
 floating_modifier $mod
 
 # start a terminal
-bindsym $mod+Return exec $HOME/bin/i3shell
-bindsym $mod+Shift+Return exec /usr/bin/sakura -t 'pop-up' -c 200 -r 40
+set $terminal "termite"
+bindsym $mod+Return exec $HOME/bin/i3shell $terminal
+bindsym $mod+Shift+Return exec /usr/bin/$terminal -t 'pop-up' -c 200 -r 40
 
 # kill focused window
 bindsym $mod+Shift+q kill

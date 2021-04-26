@@ -1,0 +1,26 @@
+#!/bin/bash
+# Launch a sakura terminal with the same directory as the terminal
+# that has the focus
+# based on https://faq.i3wm.org/question/150/how-to-launch-a-terminal-from-here/
+# Modified based on github.com/schtibe's initial script
+
+ID=$(xdpyinfo | grep focus | cut -f4 -d " ")
+PID=$(xprop -id $ID | grep PID | awk ' { print $3 }')
+SHELL_PID=$(ps -opid= --ppid $PID | tr -d '[:space:]')
+TERM_NAME=${1:-xterm}
+TERM_BIN=`which "$TERM_NAME"`
+CWD="/proc/$SHELL_PID/cwd"
+
+echo $TERM_NAME
+echo $TERM_BIN
+
+if [[ ! -e "$TERM_BIN" ]]; then
+	echo "$TERM_NAME - no such  file or directory"
+	exit 1
+fi
+
+if [[ -e $CWD ]]; then
+    $TERM_BIN -d $(readlink $CWD) &
+else
+    $TERM_BIN
+fi
