@@ -43,7 +43,7 @@ interval=once
 signal=10
 
 [set_key_layout]
-label=
+label=  
 instance=us -variant alt-intl
 command=$HOME/bin/blocks/set_key_layout
 interval=10

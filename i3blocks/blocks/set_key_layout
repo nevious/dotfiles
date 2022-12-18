@@ -34,7 +34,7 @@ function set_keyboard_layout {
 	fi
 }
 
-DEFAULT_LAYOUT="us"
+DEFAULT_LAYOUT=" us"
 TARGET_LAYOUT=${BLOCK_INSTANCE:-$DEFAULT_LAYOUT}
 CURRENT_LAYOUT=$(get_current_layout)
 
