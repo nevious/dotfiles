@@ -233,4 +233,6 @@ exec setxkbmap us -variant alt-intl
 exec --no-startup-id /usr/bin/picom -b --backend glx --vsync --config ~/.config/picom.conf
 exec --no-startup-id nm-applet
 exec --no-startup-id libinput-gestures-setup start
+exec --no-startup-id dbus-update-activation-environment DISPLAY XAUTHORITY
+exec --no-startup-id flamshot
 exec --no-startup-id notify-send Autostart "finished autostart"
