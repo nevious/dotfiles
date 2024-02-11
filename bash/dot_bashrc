@@ -1,6 +1,7 @@
 # Git alias
 alias pgl="git log --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit --date=relative"
-PATH="$PATH:/home/nevious/bin/"
+alias gitdog="git log --all --decorate --oneline --graph"
+PATH="$PATH:/home/nevious/bin/:/home/nevious/.local/bin/"
 
 # Custom function definition for prompt
 function parse_git_branch {
@@ -23,7 +24,7 @@ man() {
 
 # TERM and colors over ssh
 # tmux expects a bla-256color TERm variable,
-# thism esses up colors on most servers. Therefore i set 
+# this messes up colors on most servers. Therefore i set
 # the TERM to xterm, enforce 256 color support by aliasing tmux to tmux -2
 # and have tmux use xterm as default TERM variable
 export TERM="xterm"
@@ -44,3 +45,9 @@ GPG_TTY=$(tty)
 export SSH_AUTH_SOCK=$(gpgconf --list-dirs agent-ssh-socket)
 export GPG_TTY
 gpgconf --launch gpg-agent
+
+##########################################
+# General Aliases
+##########################################
+alias ls='ls --color=auto'
+. "$HOME/.cargo/env"

@@ -38,8 +38,8 @@ call plug#begin()
 	Plug 'luochen1990/rainbow'
 	let g:rainbow_active = 1
 
-	" CoC
-	Plug 'https://github.com/neoclide/coc.nvim'  " Auto Completion
+	" CoC Auto Completion
+	Plug 'https://github.com/neoclide/coc.nvim', {'branch': 'release'}
 	inoremap <expr> <cr> coc#pum#visible() ? coc#pum#confirm() : "\<CR>"
 	inoremap <silent><expr> <c-space> coc#refresh()
 	" Show all diagnostics
@@ -54,6 +54,17 @@ call plug#begin()
 	" Automatic closing of Paranthesis and Quotes
 	Plug 'Raimondi/delimitMate'
 
+	" Markdown preview
+	Plug 'iamcco/markdown-preview.nvim', { 'do': 'cd app && yarn install' }
+
+	" makepdf
+	Plug 'nevious/makepdf'
+
+	" emmet for html Completion
+	Plug 'mattn/emmet-vim'
+
+	" HSL language support
+	Plug 'halon/vim-hsl'
 
 call plug#end()
 
@@ -74,3 +85,6 @@ set list listchars=tab:»\ ,trail:·,precedes:…,extends:…,nbsp:‗
 
 " Use Tabs instead of spaces
 set noet
+
+" Load inital lua config
+lua require('local')
