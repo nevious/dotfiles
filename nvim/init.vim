@@ -9,8 +9,9 @@ call plug#begin()
 	Plug 'morhetz/gruvbox'
 	let g:gruvbox_contrast_dark = 'hard'
 
-	" ctrlp - Fuzzy finder
-	Plug 'ctrlpvim/ctrlp.vim'
+	" Telescope fuzzy finder and required dependency
+	Plug 'nvim-lua/plenary.nvim'
+	Plug 'nvim-telescope/telescope.nvim', { 'tag': '0.1.5' }
 
 	" Airline statusbar
 	Plug 'vim-airline/vim-airline'
@@ -88,3 +89,4 @@ set noet
 
 " Load inital lua config
 lua require('local')
+lua require('local.telescope')
