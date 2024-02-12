@@ -88,5 +88,4 @@ set list listchars=tab:»\ ,trail:·,precedes:…,extends:…,nbsp:‗
 set noet
 
 " Load inital lua config
-lua require('local')
-lua require('local.telescope')
+lua require('telescope')
