@@ -89,3 +89,4 @@ set noet
 
 " Load inital lua config
 lua require('telescope')
+lua require('nevious')
