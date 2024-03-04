@@ -70,7 +70,6 @@ call plug#begin()
 call plug#end()
 
 " --- Other configuration
-set number
 set autoindent
 set tabstop=4
 set shiftwidth=4
@@ -89,3 +88,4 @@ set noet
 
 " Load inital lua config
 lua require('telescope')
+lua require('nevious')
