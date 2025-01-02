@@ -67,6 +67,9 @@ call plug#begin()
 	" HSL language support
 	Plug 'halon/vim-hsl'
 
+	" HCL Language Plugins
+	Plug 'hashivim/vim-terraform'
+
 call plug#end()
 
 " --- Other configuration

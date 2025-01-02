@@ -1,7 +1,7 @@
 # Git alias
 alias pgl="git log --graph --pretty=format:'%Cred%h%Creset -%C(yellow)%d%Creset %s %Cgreen(%cr) %C(bold blue)<%an>%Creset' --abbrev-commit --date=relative"
 alias gitdog="git log --all --decorate --oneline --graph"
-PATH="$PATH:/home/nevious/bin/:/home/nevious/.local/bin/"
+PATH="$PATH:/home/nevious/bin/:/home/nevious/.local/bin/:/home/nevious/go/bin/"
 
 # Custom function definition for prompt
 function parse_git_branch {
