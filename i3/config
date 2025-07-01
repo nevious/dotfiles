@@ -219,18 +219,19 @@ assign [class="Google-chrome"] $WS6
 assign [class="Nextcloud"] $WS1
 no_focus [class="Nextcloud"]
 
-# docking/undocking
-bindsym $mod+shift+d exec /home/nevious/.config/i3/dock.sh
-bindsym $mod+shift+u exec /home/nevious/.config/i3/undock.sh
-
 # kyeboard layout
-exec setxkbmap us -variant alt-intl
+exec --no-startup-id setxkbmap us -variant alt-intl
 
+# Output sclaing on eDP
+exec --no-startup-id ~/bin/eDP_scale.sh
 
 # autostart
 exec --no-startup-id /usr/bin/picom -b --backend glx --vsync --config ~/.config/picom/picom.conf
 exec --no-startup-id nm-applet
+exec --no-startup-id blueman-applet
+exec --no-startup-id flameshot
+exec --no-startup-id pasystray
 exec --no-startup-id libinput-gestures-setup start
 exec --no-startup-id dbus-update-activation-environment DISPLAY XAUTHORITY
-exec --no-startup-id notify-send Autostart "finished autostart"
 exec --no-startup-id xmodmap ~/.Xmodmap
+exec --no-startup-id notify-send Autostart "finished autostart"
