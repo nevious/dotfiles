@@ -70,6 +70,8 @@ call plug#begin()
 	" HCL Language Plugins
 	Plug 'hashivim/vim-terraform'
 
+	Plug 'brianhuster/live-preview.nvim'
+
 call plug#end()
 
 " --- Other configuration
