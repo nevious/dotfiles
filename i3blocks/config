@@ -37,13 +37,13 @@ markup=none
 # See the script for details.
 [volume]
 label=VOL
-label=♪:
+label=♪: 
 instance=Master
 interval=once
 signal=10
 
 [set_key_layout]
-label= 
+label=: 
 instance=us -variant alt-intl
 command=$HOME/bin/blocks/set_key_layout
 interval=10
@@ -52,7 +52,7 @@ interval=10
 #
 # The type defaults to "mem" if the instance is not specified.
 [memory]
-label=:
+label=: 
 interval=30
 
 # Disk usage
@@ -61,7 +61,7 @@ interval=30
 # The script may be called with a optional argument to set the alert
 # (defaults to 10 for 10%).
 [disk]
-label=:
+label=: 
 instance=/
 command=$HOME/bin/blocks/disk
 interval=30
@@ -78,11 +78,11 @@ markup=pango
 # The script may be called with -w and -c switches to specify thresholds,
 # see the script for details.
 [cpu_usage]
-label=:
+label=: 
 interval=10
 
 [load_average]
-label=:
+label=: 
 interval=10
 
 # Battery indicator
@@ -95,5 +95,5 @@ interval=30
 # Date Time
 [time]
 command=date '+%a %Y-%m-%d %H:%M:%S '
-label=:
+label=: 
 interval=5

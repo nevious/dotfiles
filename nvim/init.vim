@@ -3,37 +3,21 @@ call plug#begin()
 	" NERDTree
 	Plug 'scrooloose/nerdtree'
 	let NERDTreeIgnore = ['\.pyc$', '__pycache__', '__init__.py']
-	let g:webdevicons_conceal_nerdtree_brackets=0
 
 	" gruvbox theme
 	Plug 'morhetz/gruvbox'
 	let g:gruvbox_contrast_dark = 'hard'
 
 	" Telescope fuzzy finder and required dependency
+	Plug 'nvim-telescope/telescope.nvim', {'branch': '0.1.x'}
 	Plug 'nvim-lua/plenary.nvim'
-	Plug 'nvim-telescope/telescope.nvim', { 'tag': '0.1.5' }
 
-	" Airline statusbar
-	Plug 'vim-airline/vim-airline'
-	Plug 'vim-airline/vim-airline-themes'
-	if !exists('g:airline_symbols')
-		let g:airline_symbols = {}
-	endif
-
-	let g:airline_theme = 'gruvbox'
-	let g:airline_contrast_dark = 'hard'
-	let g:airline_left_sep = ''
-	let g:airline_left_alt_sep = ''
-	let g:airline_right_sep = ''
-	let g:airline_right_alt_sep = ''
-	let g:airline_symbols.branch = ''
-	let g:airline_symbols.readonly = ''
-	let g:airline_symbols.linenr = '☰'
-	let g:airline_symbols.maxlinenr = ''
-	let g:airline_symbols.dirty='⚡'
+	" lualine
+	Plug 'nvim-lualine/lualine.nvim'
 
 	" Dev Icons
 	Plug 'ryanoasis/vim-devicons'
+	Plug 'nvim-tree/nvim-web-devicons'
 
 	" Colored Paranthesis
 	Plug 'luochen1990/rainbow'
@@ -55,9 +39,6 @@ call plug#begin()
 	" Automatic closing of Paranthesis and Quotes
 	Plug 'Raimondi/delimitMate'
 
-	" Markdown preview
-	Plug 'iamcco/markdown-preview.nvim', { 'do': 'cd app && yarn install' }
-
 	" makepdf
 	Plug 'nevious/makepdf'
 
@@ -70,7 +51,17 @@ call plug#begin()
 	" HCL Language Plugins
 	Plug 'hashivim/vim-terraform'
 
+	" MD Preview
 	Plug 'brianhuster/live-preview.nvim'
+
+	" wiki
+	Plug 'echaya/neowiki.nvim'
+
+	" treesitter language parser
+	Plug 'nvim-treesitter/nvim-treesitter', {'do': ':TSUpdate'}
+
+	" markdown render
+	Plug 'MeanderingProgrammer/render-markdown.nvim'
 
 call plug#end()
 
@@ -91,6 +82,9 @@ set list listchars=tab:»\ ,trail:·,precedes:…,extends:…,nbsp:‗
 " Use Tabs instead of spaces
 set noet
 
-" Load inital lua config
-lua require('telescope')
+" Load my lua configs
+lua require('_telescope')
 lua require('nevious')
+lua require ('_wiki')
+lua require('_treesitter')
+lua require('_markdown')

@@ -117,3 +117,6 @@ source $ZSH/oh-my-zsh.sh
 
 # GPG Configuration - only environment variable seems needed
 export SSH_AUTH_SOCK=$(gpgconf --list-dirs agent-ssh-socket)
+export PATH="$PATH:/home/nevious/bin/:/home/nevious/.local/bin/:/home/nevious/go/bin/"
+export EDITOR="nvim"
+eval "$(uv generate-shell-completion zsh)"
