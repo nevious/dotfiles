@@ -5,7 +5,7 @@ require('nvim-treesitter').install({
 
 vim.api.nvim_create_autocmd('FileType', {
 	pattern = {
-		"go", "python", "javascript", "vue", "vim", "lua"
+		"go", "python", "javascript", "vue", "vim", "lua", "markdown"
 	},
 	callback = function() vim.treesitter.start() end,
 })
