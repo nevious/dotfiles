@@ -4,5 +4,10 @@ vim.o.relativenumber = true
 
 -- Lualine
 require('lualine').setup {
-	options = { theme = 'horizon' }
+	-- 'horizon' was set before.
+	options = { theme = 'auto' }
 }
+
+-- vim.cmd('colorscheme bluloco-dark')
+vim.g.sonokai_stylej= "atlantis"
+vim.cmd('colorscheme sonokai')

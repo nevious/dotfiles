@@ -1,5 +1,6 @@
 [colors.primary]
-foreground = "#F8F8F8"
+foreground = "#E1E3E4"
+background = "#181A1C"
 
 [env]
 TERM = "xterm-256color"

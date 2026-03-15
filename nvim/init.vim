@@ -4,12 +4,11 @@ call plug#begin()
 	Plug 'scrooloose/nerdtree'
 	let NERDTreeIgnore = ['\.pyc$', '__pycache__', '__init__.py']
 
-	" gruvbox theme
-	Plug 'morhetz/gruvbox'
-	let g:gruvbox_contrast_dark = 'hard'
+	" colors
+	Plug 'sainnhe/sonokai'
 
 	" Telescope fuzzy finder and required dependency
-	Plug 'nvim-telescope/telescope.nvim', {'branch': '0.1.x'}
+	Plug 'nvim-telescope/telescope.nvim', {'version': '*'}
 	Plug 'nvim-lua/plenary.nvim'
 
 	" lualine
@@ -73,7 +72,6 @@ set smarttab
 set mouse=a
 set encoding=UTF-8
 set termguicolors
-colorscheme gruvbox
 
 " Show tabs and spaces
 highlight SpecialKey guifg=#444444 ctermfg=lightGreen
