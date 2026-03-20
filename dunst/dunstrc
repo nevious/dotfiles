@@ -1,11 +1,10 @@
 [global]
 follow = mouse
 frame_width = 1
-frame_color = "#b4befe"
+frame_color = "#a9dc76"
 separator_color= frame
-highlight = "#74c7ec"
-background = "#1e1e2e"
-foreground = "#cdd6f4"
+background = "#24272E"
+foreground = "#E1E3E4"
 corner_radius = 5
 progress_bar_corner_radius = 5
 corners = top-left,bottom
@@ -16,16 +15,16 @@ font = MesloLGS Nerd Font Mono, Noto Emoji 10
 format = "<b>👉 %a</b>\n%s\n<i>%b</i>"
 
 [urgency_low]
-foreground = "#a6e3a1"
-frame_color = "#a6e3a1"
+foreground = "#a9dc76"
+frame_color = "#a9dc76"
 default_icon = "~/.config/dunst/icons/bell-badge-low.svg"
 
 [urgency_normal]
-foreground = "#74c7ec"
-frame_color = "#74c7ec"
+foreground = "#77d5f0"
+frame_color = "#77d5f0"
 default_icon = "~/.config/dunst/icons/bell-badge.svg"
 
 [urgency_critical]
-foreground = "#f38ba8"
-frame_color = "#f38ba8"
+foreground = "#FF6188"
+frame_color = "#FF6188"
 default_icon = "~/.config/dunst/icons/alert-decagram.svg"

@@ -71,7 +71,6 @@ set shiftwidth=4
 set smarttab
 set mouse=a
 set encoding=UTF-8
-set termguicolors
 
 " Show tabs and spaces
 highlight SpecialKey guifg=#444444 ctermfg=lightGreen

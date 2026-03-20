@@ -19,13 +19,13 @@ set $WS10 " "
 
 # custom colors
 #set $main_blue #2B83A6
-set $main_blue #6ba2ba
+#set $main_blue #6ba2ba
+set $main_blue #72ccEB
 set $main_ws_fg #212121
-set $separator #A64E2B
 set $statusline #e2e2e2
 set $white #FFFFFF
 set $focus_indicator #2e9ef4
-set $generic_gray #212121
+set $generic_gray #24272e
 set $light_gray #86888C
 set $urgent_border #2F343A
 set $urgent_background #D64E4E
@@ -163,7 +163,7 @@ bar {
 	colors {
 		background $generic_gray
 		statusline $statusline
-		separator $separator
+		separator $main_blue
 
 		# class border backgr text
 		focused_workspace $main_blue $main_blue $main_ws_fg
