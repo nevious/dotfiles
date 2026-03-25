@@ -18,9 +18,7 @@ local opts = { silent = true }
 -- ==========================
 
 -- Enter: confirm completion if popup menu visible, otherwise insert newline
-vim.keymap.set('i', '<CR>', function()
-  return vim.fn['coc#pum#visible']() and vim.fn['coc#pum#confirm']() or "\n"
-end, { expr = true, noremap = true, silent = true })
+vim.keymap.set('i', '<cr>', [[coc#pum#visible() ? coc#pum#confirm() : "\<C-g>u\<CR>\<c-r>=coc#on_enter()\<CR>"]], { expr = true, noremap = true, silent = true })
 
 -- Ctrl-Space: manually trigger completion
 vim.keymap.set('i', '<C-Space>', function()
