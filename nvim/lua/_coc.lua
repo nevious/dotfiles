@@ -40,3 +40,7 @@ vim.keymap.set('n', '<Leader>i', '<Plug>(coc-references)', opts)
 
 -- Code actions / refactoring
 vim.keymap.set('n', '<Leader>r', '<Plug>(coc-codeaction-refactor)', opts)
+vim.keymap.set('n', '<Leader>rn', '<Plug>(coc-rename)', opts)
+
+-- Show the workspace output to see what went wrong
+vim.keymap.set('n', '<Leader>co', ':CocCommand workspace.showOutput<CR>', opts)
