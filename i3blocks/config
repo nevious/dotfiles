@@ -45,7 +45,7 @@ signal=10
 [set_key_layout]
 label=: 
 instance=us -variant alt-intl
-command=$HOME/bin/blocks/set_key_layout
+command=~/.local/bin/set_key_layout
 interval=10
 
 # Memory usage
@@ -63,13 +63,13 @@ interval=30
 [disk]
 label=: 
 instance=/
-command=$HOME/bin/blocks/disk
+command=~/.local/bin/disk
 interval=30
 
 # Unified connectivity block providing wired/wireless network information
 # no bandwith/network usage displayed - that's useless
 [connblock]
-command=$HOME/bin/blocks/connblock
+command=~/.local/bin/connblock
 interval=30
 markup=pango
 
@@ -89,7 +89,7 @@ interval=10
 # The battery instance defaults to 0.
 [battery]
 instance=0
-command=$HOME/bin/blocks/battery
+command=~/.local/bin/battery
 interval=30
 
 # Date Time

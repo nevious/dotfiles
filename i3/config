@@ -40,7 +40,7 @@ set $mod Mod4
 
 # Font for window titles. Will also be used by the bar unless a different font
 # is used in the bar {} block below.
-font pango:Hack Nerd Font Mono 9
+font pango:Hack Nerd Font Mono 10
 
 # Before i3 v4.8, we used to recommend this one as the default:
 # font -misc-fixed-medium-r-normal--13-120-75-75-C-70-iso10646-1
@@ -223,7 +223,7 @@ no_focus [class="Nextcloud"]
 exec --no-startup-id setxkbmap us -variant alt-intl
 
 # Output sclaing on eDP
-exec --no-startup-id ~/bin/eDP_scale.sh
+exec --no-startup-id ~/.local/bin//eDP_scale.sh
 
 # autostart
 exec --no-startup-id /usr/bin/picom -b --backend glx --vsync --config ~/.config/picom/picom.conf

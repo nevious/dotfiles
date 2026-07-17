@@ -62,7 +62,7 @@ def main():
 		output = output_map['b_crit']
 
 	if secsleft == 0:
-		timeleft = ''
+		timeleft = '∞'
 	else:
 		timeleft = datetime.timedelta(seconds=secsleft)
 
