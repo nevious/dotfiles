@@ -6,7 +6,3 @@ lua require('_treesitter')
 lua require('_markdown')
 lua require ('_wiki')
 lua require('_neotree')
-
-
-" -- Simple configurations
-lua require('colorizer').setup()  -- requires termcolors to be set

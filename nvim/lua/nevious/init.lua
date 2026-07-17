@@ -32,3 +32,8 @@ require('lualine').setup {
 -- vim.cmd('colorscheme bluloco-dark')
 vim.g.sonokai_stylej= "atlantis"
 vim.cmd.colorscheme('sonokai')
+
+-- Colorizer, simply activate it
+require('nvim-highlight-colors').setup({
+	render = 'virtual'
+})
