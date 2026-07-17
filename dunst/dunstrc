@@ -12,7 +12,7 @@ progress_bar_corners = top-left,bottom-right
 offset = (25, 25)
 gap_size = 5
 font = MesloLGS Nerd Font Mono, Noto Emoji 10
-format = "<b>👉 %a</b>\n%s\n<i>%b</i>"
+format = "<b>󰄾 %a</b>\n%s\n<i>%b</i>"
 
 [urgency_low]
 foreground = "#a9dc76"
