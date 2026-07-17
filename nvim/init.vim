@@ -5,6 +5,7 @@ lua require('_telescope')
 lua require('_treesitter')
 lua require('_markdown')
 lua require ('_wiki')
+lua require('_neotree')
 
 
 " -- Simple configurations

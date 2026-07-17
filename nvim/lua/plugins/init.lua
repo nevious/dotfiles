@@ -1,7 +1,6 @@
 -- Testing lazy.nvim
 return {
     'sainnhe/sonokai',
-    'scrooloose/nerdtree',
     {
         'nvim-telescope/telescope.nvim', version = '*',
         dependencies = {
@@ -31,5 +30,14 @@ return {
         -- this is equivalent to setup({}) function
     },
     'https://gitlab.com/HiPhish/rainbow-delimiters.nvim',
-    'norcalli/nvim-colorizer.lua'
+    'brenoprata10/nvim-highlight-colors',
+    {
+        "nvim-neo-tree/neo-tree.nvim",
+        branch = "v3.x",
+        dependencies = {
+          "nvim-lua/plenary.nvim",
+          "MunifTanjim/nui.nvim",
+        },
+        lazy = false, -- neo-tree will lazily load itself
+    }
 }
