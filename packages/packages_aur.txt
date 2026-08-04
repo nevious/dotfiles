@@ -1,0 +1,11 @@
+brave-bin
+brother-dcpl3550cdw
+ddev-bin
+google-chrome
+i3blocks-contrib
+libinput-gestures
+nitrogen
+pikaur
+remmina-plugin-rdesktop
+subnetcalc
+wrk

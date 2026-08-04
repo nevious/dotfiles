@@ -2,7 +2,7 @@
 
 SCRIPTS := $(wildcard ./*.sh)
 # SCRIPTS can be added to
-#SCRIPTS += $(wildcard ./*.py)
+# SCRIPTS += $(wildcard ./*.py)
 
 install:
 	mkdir -p $(BIN_DIR)
