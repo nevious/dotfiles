@@ -45,6 +45,7 @@ i3lock
 i3status
 i3-wm
 iftop
+imagemagick
 inetutils
 inotify-tools
 intel-ucode
