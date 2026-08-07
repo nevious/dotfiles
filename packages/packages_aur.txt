@@ -4,7 +4,6 @@ ddev-bin
 google-chrome
 i3blocks-contrib
 libinput-gestures
-nitrogen
 pikaur
 remmina-plugin-rdesktop
 subnetcalc

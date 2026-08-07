@@ -190,7 +190,7 @@ bindsym $mod+F2 gaps inner current plus 5
 bindsym $mod+F3 gaps outer current plus 5
 
 # wallpaper
-exec --no-startup-id nitrogen --restore
+exec_always --no-startup-id feh --no-fehbg --bg-max ~/.config/i3/wallpaper/wallpaper.png
 
 # lock the screen
 bindsym $mod+y exec i3lock -c "#000000"
