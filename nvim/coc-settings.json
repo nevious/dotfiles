@@ -2,10 +2,10 @@
 	"inlayHint.enable": false,
 	"python.analysis.useLibraryCodeForTypes": false,
 	"notification.statusLineProgress": true,
-    "Lua.runtime.version": "LuaJIT",
-    "Lua.workspace.library": [
-        "/usr/share/nvim/runtime/"
-    ],
+	"Lua.runtime.version": "LuaJIT",
+	"Lua.workspace.library": [
+		"/usr/share/nvim/runtime/"
+	],
 	"languageserver": {
 		"terraform": {
 			"command": "terraform-ls",
