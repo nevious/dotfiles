@@ -3,18 +3,11 @@
 	"python.analysis.useLibraryCodeForTypes": false,
 	"notification.statusLineProgress": true,
 	"Lua.runtime.version": "LuaJIT",
+	"Lua.workspace.checkThirdParty": false,
 	"Lua.workspace.library": [
 		"/usr/share/nvim/runtime/"
 	],
 	"languageserver": {
-		"terraform": {
-			"command": "terraform-ls",
-			"args": ["serve"],
-			"filetypes": ["terraform", "tf"],
-			"initializationOptions": {
-				"ignoreSingleFileWarning": true
-			}
-		},
 		"go": {
 			"command": "gopls",
 			"rootPatterns": ["go.work", "go.mod", ".vim/", ".git/", ".hg/"],

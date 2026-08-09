@@ -12,7 +12,16 @@ return {
     'nvim-lualine/lualine.nvim',
     'ryanoasis/vim-devicons',
     'nvim-tree/nvim-web-devicons',
-    { 'neoclide/coc.nvim', branch = 'release', },
+    {
+        'neoclide/coc.nvim',
+        branch = 'release',
+        init = function ()
+            vim.g.coc_global_extensions = {
+                "coc-lua", "coc-json", "coc-html", "coc-tsserver", "coc-pyright",
+                "coc-phpls", "coc-go", "coc-clangd"
+            }
+        end
+    },
     'halon/vim-hsl',
     'hashivim/vim-terraform',
     'brianhuster/live-preview.nvim',
