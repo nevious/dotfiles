@@ -4,7 +4,7 @@ export BIN_DIR = $(HOME)/.local/bin
 
 .PHONY: default all packages xorg alacritty bash bin dunst gtk3 i3 i3blocks nvim picom rofi zsh profile
 
-default: xorg alacritty bin dunst gtk3 i3 i3blocks nvim picom rofi zsh profile
+default: xorg alacritty bin dunst gtk3 i3 i3blocks nvim picom rofi zsh p10k profile
 all: packages xorg alacritty bash bin dunst gtk3 i3 i3blocks nvim picom rofi zsh profile
 
 packages:
@@ -57,6 +57,9 @@ rofi:
 
 zsh:
 	stow -t $(HOME) --dotfiles zsh
+
+p10k:
+	stow -t $(HOME) --dotfiles p10k.zsh
 
 profile:
 	stow -t $(HOME) --dotfiles profile
