@@ -1,4 +1,9 @@
 {
+	"go.goplsPath": "/home/nevious/go/bin/gopls",
+	"go.goplsOptions": {
+		"staticcheck": true,
+		"completeUnimported": true,
+	},
 	"inlayHint.enable": false,
 	"python.analysis.useLibraryCodeForTypes": false,
 	"notification.statusLineProgress": true,
@@ -6,15 +11,5 @@
 	"Lua.workspace.checkThirdParty": false,
 	"Lua.workspace.library": [
 		"/usr/share/nvim/runtime/"
-	],
-	"languageserver": {
-		"go": {
-			"command": "gopls",
-			"rootPatterns": ["go.work", "go.mod", ".vim/", ".git/", ".hg/"],
-			"filetypes": ["go"],
-			"initializationOptions": {
-				"usePlaceholders": true
-			}
-		}
-	}
+	]
 }
