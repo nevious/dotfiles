@@ -1,4 +1,13 @@
 {
+	"languageserver": {
+		"opentofu": {
+			"command": "tofu-ls",
+			"args": ["serve"],
+			"filetypes": ["terraform", "tf"],
+			"initializationOptions": {},
+			"settings": {}
+		}
+	},
 	"go.goplsPath": "/home/nevious/go/bin/gopls",
 	"go.goplsOptions": {
 		"staticcheck": true,
